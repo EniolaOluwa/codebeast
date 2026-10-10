@@ -1,0 +1,32 @@
+{
+  "name": "meathouse",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "prepare": "husky",
+    "dev": "turbo dev",
+    "dev:full": "docker-compose -f docker-compose.dev.yml up -d && pnpm dev",
+    "dev:down": "docker-compose -f docker-compose.dev.yml down",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "test": "turbo test",
+    "test:coverage": "turbo test:coverage",
+    "check-types": "turbo check-types",
+    "clean": "turbo clean",
+    "db:generate": "turbo db:generate",
+    "db:migrate": "turbo db:migrate",
+    "db:studio": "turbo db:studio",
+    "format": "prettier --write \"**/*.{ts,tsx,md,json}\""
+  },
+  "devDependencies": {
+    "turbo": "^2.4.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.8.0",
+    "husky": "^9.1.0",
+    "lint-staged": "^15.4.0"
+  }
+}

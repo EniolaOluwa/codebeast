@@ -1,0 +1,8 @@
+commit_msg=$(cat "$1")
+pattern="^[a-zA-Z]+: .+"
+
+if ! echo "$commit_msg" | grep -qE "$pattern"; then
+  echo "ERROR: Commit message must follow 'topic: message' format"
+  echo "Example: init: scaffold project structure"
+  exit 1
+fi

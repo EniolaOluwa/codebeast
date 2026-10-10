@@ -1,0 +1,31 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      - DATABASE_URL
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+      - CORS_ORIGIN
+    expose:
+      - "3001"
+    networks:
+      - dokploy-network
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL
+    expose:
+      - "3000"
+    networks:
+      - dokploy-network
+
+networks:
+  dokploy-network:
+    external: true
