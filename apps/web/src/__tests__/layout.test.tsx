@@ -15,7 +15,9 @@ describe("RootLayout", () => {
 
   it("exports metadata with title and description", async () => {
     const mod = await import("../../app/layout");
-    expect(mod.metadata.title).toBe("MeatHouse");
-    expect(mod.metadata.description).toBe("MeatHouse application");
+    expect(mod.metadata.title).toBe("CodeBeast");
+    expect(mod.metadata.description).toBe(
+      "Autonomous SRE platform that turns customer support tickets and Sentry errors into validated pull requests.",
+    );
   });
 });

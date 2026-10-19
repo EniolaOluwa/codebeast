@@ -4,15 +4,17 @@ import { describe, expect, it } from "vitest";
 import Page from "../../app/page";
 
 describe("Home Page", () => {
-  it("renders the heading", () => {
+  it("renders the CodeBeast heading", () => {
     render(<Page />);
-    expect(screen.getByRole("heading", { name: /meathouse/i })).toBeDefined();
+    expect(screen.getByRole("heading", { name: /codebeast/i })).toBeDefined();
   });
 
-  it("renders the welcome text", () => {
+  it("renders the product tagline", () => {
     render(<Page />);
     expect(
-      screen.getByText(/welcome to the meathouse application/i),
+      screen.getByText(
+        /turns customer support tickets and sentry errors into validated pull requests/i,
+      ),
     ).toBeDefined();
   });
 });

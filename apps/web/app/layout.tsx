@@ -3,8 +3,9 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "MeatHouse",
-  description: "MeatHouse application",
+  title: "CodeBeast",
+  description:
+    "Autonomous SRE platform that turns customer support tickets and Sentry errors into validated pull requests.",
 };
 
 export default function RootLayout({
