@@ -8,15 +8,15 @@ const swaggerPlugin = fp(
       openapi: {
         openapi: "3.1.0",
         info: {
-          title: "MeatHouse API",
-          description: "MeatHouse application API",
+          title: "CodeBeast API",
+          description: "CodeBeast API — autonomous SRE platform",
           version: "1.0.0",
         },
         servers: [
           {
             url:
               fastify.config.NODE_ENV === "production"
-                ? "https://api.meathouse.app"
+                ? "https://api.codebeast.app"
                 : `http://localhost:${fastify.config.PORT}`,
           },
         ],

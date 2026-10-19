@@ -3,11 +3,11 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "5434:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: meathouse
+      POSTGRES_DB: codebeast
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
