@@ -1,26 +1,28 @@
-export const envSchema = {
-  type: "object",
-  required: ["DATABASE_URL"],
-  properties: {
-    PORT: { type: "string", default: "3001" },
-    HOST: { type: "string", default: "0.0.0.0" },
-    NODE_ENV: {
-      type: "string",
-      enum: ["development", "production", "test"],
-      default: "development",
-    },
-    DATABASE_URL: { type: "string" },
-    CORS_ORIGIN: { type: "string", default: "*" },
-    LOG_LEVEL: { type: "string", default: "info" },
-  },
-  additionalProperties: false,
-} as const;
+import { z } from "zod";
 
-export interface Env {
-  PORT: string;
-  HOST: string;
-  NODE_ENV: "development" | "production" | "test";
-  DATABASE_URL: string;
-  CORS_ORIGIN: string;
-  LOG_LEVEL: string;
+export const envSchema = z.object({
+  PORT: z.coerce.number().int().positive().default(3001),
+  HOST: z.string().min(1).default("0.0.0.0"),
+  NODE_ENV: z
+    .enum(["development", "production", "test"])
+    .default("development"),
+  DATABASE_URL: z.string().min(1),
+  CORS_ORIGIN: z.string().min(1).default("*"),
+  LOG_LEVEL: z
+    .enum(["error", "warn", "info", "debug", "verbose"])
+    .default("info"),
+});
+
+export type Env = z.infer<typeof envSchema>;
+
+export function validateEnv(config: Record<string, unknown>): Env {
+  const parsed = envSchema.safeParse(config);
+
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid environment variables: ${JSON.stringify(parsed.error.flatten().fieldErrors)}`,
+    );
+  }
+
+  return parsed.data;
 }

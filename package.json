@@ -6,6 +6,11 @@
   "engines": {
     "node": ">=22.0.0"
   },
+  "pnpm": {
+    "overrides": {
+      "fastify": "5.11.3"
+    }
+  },
   "scripts": {
     "prepare": "husky",
     "dev": "turbo dev",

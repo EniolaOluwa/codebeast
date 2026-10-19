@@ -13,7 +13,7 @@ every step has a check.
 | Service       | URL                   | Notes                            |
 | ------------- | --------------------- | -------------------------------- |
 | Web (Next.js) | http://localhost:3000 | Landing page                     |
-| API (Fastify) | http://localhost:3001 | Swagger UI at `/api-docs`        |
+| API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`        |
 | PostgreSQL    | localhost:5434        | Docker container, db `codebeast` |
 
 ## External dependencies
