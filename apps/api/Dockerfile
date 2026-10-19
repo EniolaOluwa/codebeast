@@ -18,7 +18,7 @@ WORKDIR /app
 COPY --from=deps /app ./
 COPY . .
 RUN pnpm --filter @repo/api build
-RUN pnpm --filter @repo/api deploy --prod /prod/api
+RUN pnpm --filter @repo/api deploy --prod /prod/api && rm -f /prod/api/.env
 
 FROM base AS runner
 WORKDIR /app
@@ -31,4 +31,4 @@ COPY --from=builder --chown=fastify:nodejs /prod/api ./
 USER fastify
 EXPOSE 3001
 
-CMD ["node", "dist/server.js"]
+CMD ["sh", "-c", "node_modules/.bin/prisma migrate deploy --schema node_modules/@repo/db/prisma/schema.prisma && exec node dist/server.js"]

@@ -25,7 +25,8 @@
     "@fastify/under-pressure": "^9.0.0",
     "@sinclair/typebox": "^0.34.0",
     "@repo/types": "workspace:*",
-    "@repo/db": "workspace:*"
+    "@repo/db": "workspace:*",
+    "prisma": "^6.6.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",

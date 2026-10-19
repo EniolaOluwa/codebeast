@@ -6,8 +6,9 @@
 **/coverage
 **/*.tsbuildinfo
 .git
-.env
-.env.*
+**/.env
+**/.env.local
+**/.env.*.local
 **/*.log
 .vscode
 .idea

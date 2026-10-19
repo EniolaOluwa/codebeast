@@ -64,6 +64,9 @@ importers:
       fastify-plugin:
         specifier: ^5.0.0
         version: 5.1.0
+      prisma:
+        specifier: ^6.6.0
+        version: 6.19.3(magicast@0.3.5)(typescript@5.9.3)
     devDependencies:
       "@repo/eslint-config":
         specifier: workspace:*

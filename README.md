@@ -148,3 +148,7 @@ Deterministic, non-interactive. Stop at the first failing check and report the o
 1. Create a Docker Compose service in Dokploy connected to this repo; compose path `./docker-compose.yml`.
 2. Create a managed PostgreSQL database in Dokploy and set `DATABASE_URL` on the api service.
 3. Set `CORS_ORIGIN` and `NEXT_PUBLIC_API_URL`; configure domains in the Dokploy Domains tab.
+
+Database migrations are applied automatically when the api container starts
+(`prisma migrate deploy`), so every deploy brings the schema up to date. If a migration
+fails, the container exits instead of serving a mismatched schema.
