@@ -46,7 +46,7 @@ pnpm install
 
 # 2. Environment files (once per clone)
 cp apps/api/.env.example apps/api/.env
-printf 'DATABASE_URL=postgresql://postgres:postgres@localhost:5434/codebeast?schema=public\n' > packages/db/.env
+cp packages/db/.env.example packages/db/.env
 
 # 3. Database: start postgres, generate the client, apply migrations
 docker-compose -f docker-compose.dev.yml up -d
@@ -69,7 +69,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 
 ## Environment variables
 
-`apps/api/.env` (from `.env.example`) — `DATABASE_URL` is required; the rest have defaults.
+`apps/api/.env` (from `apps/api/.env.example`) — `DATABASE_URL` is required; the rest have defaults.
 
 | Variable       | Default       |
 | -------------- | ------------- |
@@ -80,7 +80,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 | `LOG_LEVEL`    | `info`        |
 | `CORS_ORIGIN`  | `*`           |
 
-`packages/db/.env` holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
+`packages/db/.env` (from `packages/db/.env.example`) holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
 
 ## Common scripts
 
@@ -121,7 +121,7 @@ Deterministic, non-interactive. Stop at the first failing check and report the o
 
    ```bash
    test -f apps/api/.env || cp apps/api/.env.example apps/api/.env
-   test -f packages/db/.env || printf 'DATABASE_URL=postgresql://postgres:postgres@localhost:5434/codebeast?schema=public\n' > packages/db/.env
+   test -f packages/db/.env || cp packages/db/.env.example packages/db/.env
    ```
 
 4. **Database**
