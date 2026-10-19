@@ -1,0 +1,84 @@
+# apps/api — Build Progress
+
+Tracking doc for the control-plane MVP. Status legend: `[ ]` todo, `[~]` in progress,
+`[x]` done, `[!]` blocked.
+
+## Snapshot
+
+- **Branch:** `feat-backend/api-mvp` (recommended; based on `feat-backend/develop`)
+- **Milestone:** Control-plane MVP
+- **Updated:** 2026-10-19
+- **Baseline green:** `pnpm --filter @repo/api lint && check-types && test`
+
+## Locked decisions
+
+JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHub App
+(installation tokens) · Slack ingestion first · wire contracts stay in `@repo/types`
+(converted to Zod) · Testcontainers for integration tests. See `decisions.md`.
+
+## Phases
+
+| #   | Phase             | Status | Acceptance criteria                                                                                                                                     |
+| --- | ----------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | Contracts         | `[ ]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
+| 1   | Data foundation   | `[ ]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
+| 2   | Identity & access | `[ ]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
+| 3   | Ingestion         | `[ ]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
+| 4   | Orchestration     | `[ ]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
+| 5   | Delivery          | `[ ]`  | patch/validation persistence; GitHub App PR creation; issue retry/ignore/approve                                                                        |
+| 6   | Hardening         | `[ ]`  | audit logs; readiness (db+redis); metrics; rate limits; Swagger; RCL refresh                                                                            |
+
+## Phase 0 — Contracts
+
+- [ ] `errorEnvelope`, `paginatedResponse` schemas
+- [ ] `issueContext`, `planBlueprint`, `patchSubmission`, `validationResult`
+- [ ] `runStatus` + run/issue/integration enums
+- [ ] Convert `@repo/types` interfaces to Zod; keep package name
+
+## Phase 1 — Data foundation
+
+- [ ] Prisma models: Tenant, Membership, ApiKey, RefreshToken, Repository,
+      Integration, GitHubInstallation, SlackWorkspace, WebhookEvent, Issue,
+      IssueSignal, Run, Plan, Patch, FileChange, ValidationRun, PullRequest, AuditLog
+- [ ] Additive migration + RLS policies + `codebeast_app` role
+- [ ] `TenantContext` (AsyncLocalStorage) + `PrismaService.withTenant`
+- [ ] `CryptoService` (AES-256-GCM) + config/env additions
+- [ ] Extend `env.schema.ts` and `.env.example`
+
+## Phase 2 — Identity & access
+
+- [ ] auth module (register/login/refresh/logout/me)
+- [ ] api-keys module (prefix + sha256 hash, scopes)
+- [ ] members module (roles)
+- [ ] `AuthGuard`, `TenantGuard`, `@Public`, `@Roles`, `@Scopes`
+
+## Phase 3 — Ingestion
+
+- [ ] repositories + integrations CRUD
+- [ ] webhook controllers (Slack/Sentry/GitHub/Jira) + signature verification
+- [ ] `WebhookEvent` idempotency + `ingest` queue enqueue
+- [ ] triage/correlation service
+
+## Phase 4 — Orchestration
+
+- [ ] Redis/BullMQ module + queues (ingest/triage/plan/code/validate/pr)
+- [ ] `Run` state machine + attempt accounting
+- [ ] `AgentClient` interface + stub
+- [ ] workers with retry/backoff/escalation
+
+## Phase 5 — Delivery
+
+- [ ] Patch/FileChange/ValidationRun persistence
+- [ ] GitHub App token exchange + PR creation (`@octokit/auth-app`)
+- [ ] issue actions: retry / ignore / approve
+
+## Phase 6 — Hardening
+
+- [ ] audit log interceptor + `GET /v1/audit-logs`
+- [ ] extended readiness (db + redis)
+- [ ] metrics + webhook/login rate limits
+- [ ] per-repo RCL + Swagger polish
+
+## Next action
+
+Start **Phase 0**: freeze contracts and add Zod schemas to `@repo/types`.
