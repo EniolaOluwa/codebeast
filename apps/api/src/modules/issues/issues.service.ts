@@ -31,6 +31,8 @@ export interface IssueView {
   status: IssueStatus;
   correlationKey: string;
   signalCount: number;
+  /** Distinct providers among the newest signals (Reports-table chips). */
+  providers: Provider[];
   repository: { fullName: string; defaultBranch: string } | null;
   ticket: TicketView | null;
   firstSeenAt: string;
@@ -73,6 +75,7 @@ interface IssueRow {
     summary: string;
     createdAt: Date;
   } | null;
+  signals?: { provider: Provider }[];
 }
 
 export function toIssueView(row: IssueRow): IssueView {
@@ -82,6 +85,9 @@ export function toIssueView(row: IssueRow): IssueView {
     status: row.status,
     correlationKey: row.correlationKey,
     signalCount: row.signalCount,
+    providers: [
+      ...new Set((row.signals ?? []).map((signal) => signal.provider)),
+    ],
     repository: row.repository,
     ticket: row.ticket
       ? {
@@ -107,6 +113,12 @@ const REPOSITORY_SELECT = {
 const ISSUE_INCLUDE = {
   repository: REPOSITORY_SELECT,
   ticket: true,
+  // Only used to build the provider chips in list views.
+  signals: {
+    select: { provider: true },
+    orderBy: { occurredAt: "desc" },
+    take: 3,
+  },
 } as const;
 
 @Injectable()

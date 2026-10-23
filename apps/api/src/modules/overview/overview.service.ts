@@ -62,6 +62,11 @@ export class OverviewService {
           include: {
             repository: { select: { fullName: true, defaultBranch: true } },
             ticket: true,
+            signals: {
+              select: { provider: true },
+              orderBy: { occurredAt: "desc" },
+              take: 3,
+            },
           },
         }),
         tx.integration.findMany({
