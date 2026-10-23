@@ -1,6 +1,11 @@
-import "dotenv/config";
-
 import { createPrismaClient } from "../src/client.ts";
+
+// Node's built-in .env loader — avoids a dotenv dependency in this package.
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env in the cwd; rely on the ambient environment.
+}
 
 /**
  * Dev seed: one demo tenant, its owner, and one repository.
