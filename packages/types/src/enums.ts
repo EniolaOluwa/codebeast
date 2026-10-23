@@ -20,6 +20,8 @@ export const ISSUE_STATUSES = [
   /** Computed and validated: awaiting a human (or rule) to ship it. */
   "READY",
   "RUNNING",
+  /** Shipped to Jira; the pull request may still be pending. */
+  "TICKETED",
   "PR_OPENED",
   "RESOLVED",
   "IGNORED",
@@ -84,6 +86,7 @@ export const API_KEY_SCOPES = [
   "runs:read",
   "runs:write",
   "members:read",
+  "overview:read",
   "audit:read",
 ] as const;
 export const apiKeyScopeSchema = z.enum(API_KEY_SCOPES);

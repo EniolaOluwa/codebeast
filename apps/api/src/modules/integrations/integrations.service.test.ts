@@ -30,7 +30,13 @@ function makeHarness() {
     ),
   } as unknown as PrismaService;
 
-  return { service: new IntegrationsService(prisma, crypto), tx };
+  const publisher = { publish: vi.fn(async (): Promise<void> => undefined) };
+
+  return {
+    service: new IntegrationsService(prisma, crypto, publisher as never),
+    tx,
+    publisher,
+  };
 }
 
 function rowFromCreateData(data: Record<string, unknown>) {
@@ -145,6 +151,60 @@ describe("IntegrationsService", () => {
       NotFoundError,
     );
     await expect(service.remove("tenant_1", "nope")).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+});
+
+describe("IntegrationsService.requestScan", () => {
+  it("queues a scan for an enabled Jira source", async () => {
+    const { service, tx, publisher } = makeHarness();
+
+    tx.integration.findFirst.mockResolvedValue({
+      id: "integration_1",
+      type: "JIRA",
+      enabled: true,
+    });
+
+    await expect(
+      service.requestScan("tenant_1", "integration_1"),
+    ).resolves.toEqual({ accepted: true });
+
+    expect(publisher.publish).toHaveBeenCalledWith(
+      "scan",
+      { tenantId: "tenant_1", integrationId: "integration_1" },
+      { jobId: "scan-integration_1" },
+    );
+  });
+
+  it("rejects non-Jira sources and disabled integrations", async () => {
+    const { service, tx } = makeHarness();
+
+    tx.integration.findFirst.mockResolvedValue({
+      id: "integration_1",
+      type: "SLACK",
+      enabled: true,
+    });
+    await expect(
+      service.requestScan("tenant_1", "integration_1"),
+    ).rejects.toThrow(/Only Jira sources/);
+
+    tx.integration.findFirst.mockResolvedValue({
+      id: "integration_1",
+      type: "JIRA",
+      enabled: false,
+    });
+    await expect(
+      service.requestScan("tenant_1", "integration_1"),
+    ).rejects.toThrow(/disabled/);
+  });
+
+  it("404s for missing integrations", async () => {
+    const { service, tx } = makeHarness();
+
+    tx.integration.findFirst.mockResolvedValue(null);
+
+    await expect(service.requestScan("tenant_1", "nope")).rejects.toThrow(
       NotFoundError,
     );
   });

@@ -22,6 +22,7 @@ describe("validateEnv", () => {
       WEBHOOK_RAW_TTL_DAYS: 7,
       REDIS_URL: "redis://localhost:6379",
       INGEST_COALESCE_MS: 30_000,
+      JIRA_CLIENT_MODE: "stub",
     });
   });
 

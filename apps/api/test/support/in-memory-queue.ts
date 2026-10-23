@@ -1,3 +1,4 @@
+import type { JiraScanService } from "../../src/modules/jira/jira-scan.service.ts";
 import type { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
 import type {
   IngestJob,
@@ -6,7 +7,9 @@ import type {
   QueueName,
   QueuePublisher,
   RunStageJob,
+  ScanJob,
   ShipPrJob,
+  TicketJob,
   TriageJob,
 } from "../../src/queues/queue.types.ts";
 
@@ -60,6 +63,7 @@ export class InMemoryQueue implements QueuePublisher {
 export async function drainQueue(
   queue: InMemoryQueue,
   orchestrator: RunOrchestrator,
+  jiraScan?: JiraScanService,
 ): Promise<void> {
   while (queue.jobs.length > 0) {
     const job = queue.jobs.shift()!;
@@ -85,6 +89,19 @@ export async function drainQueue(
       case "pr":
         await orchestrator.handleShipPr(job.payload as unknown as ShipPrJob);
         break;
+      case "ticket":
+        await orchestrator.handleCreateTicket(
+          job.payload as unknown as TicketJob,
+        );
+        break;
+      case "scan": {
+        if (!jiraScan) {
+          throw new Error("drainQueue needs the JiraScanService to run scans");
+        }
+
+        await jiraScan.run(job.payload as unknown as ScanJob);
+        break;
+      }
     }
   }
 }

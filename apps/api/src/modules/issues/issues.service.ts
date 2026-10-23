@@ -15,6 +15,16 @@ import {
 import { RunOrchestrator } from "../runs/run-orchestrator.service.ts";
 import { TERMINAL_RUN_STATUSES } from "../runs/run-state-machine.ts";
 
+export interface TicketView {
+  id: string;
+  key: string;
+  url: string;
+  projectKey: string;
+  issueType: string;
+  summary: string;
+  createdAt: string;
+}
+
 export interface IssueView {
   id: string;
   title: string;
@@ -22,6 +32,7 @@ export interface IssueView {
   correlationKey: string;
   signalCount: number;
   repository: { fullName: string; defaultBranch: string } | null;
+  ticket: TicketView | null;
   firstSeenAt: string;
   lastSeenAt: string;
   createdAt: string;
@@ -53,9 +64,18 @@ interface IssueRow {
   lastSeenAt: Date;
   createdAt: Date;
   repository: { fullName: string; defaultBranch: string } | null;
+  ticket: {
+    id: string;
+    key: string;
+    url: string;
+    projectKey: string;
+    issueType: string;
+    summary: string;
+    createdAt: Date;
+  } | null;
 }
 
-function toIssueView(row: IssueRow): IssueView {
+export function toIssueView(row: IssueRow): IssueView {
   return {
     id: row.id,
     title: row.title,
@@ -63,6 +83,17 @@ function toIssueView(row: IssueRow): IssueView {
     correlationKey: row.correlationKey,
     signalCount: row.signalCount,
     repository: row.repository,
+    ticket: row.ticket
+      ? {
+          id: row.ticket.id,
+          key: row.ticket.key,
+          url: row.ticket.url,
+          projectKey: row.ticket.projectKey,
+          issueType: row.ticket.issueType,
+          summary: row.ticket.summary,
+          createdAt: row.ticket.createdAt.toISOString(),
+        }
+      : null,
     firstSeenAt: row.firstSeenAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
     createdAt: row.createdAt.toISOString(),
@@ -71,6 +102,11 @@ function toIssueView(row: IssueRow): IssueView {
 
 const REPOSITORY_SELECT = {
   select: { fullName: true, defaultBranch: true },
+} as const;
+
+const ISSUE_INCLUDE = {
+  repository: REPOSITORY_SELECT,
+  ticket: true,
 } as const;
 
 @Injectable()
@@ -97,7 +133,7 @@ export class IssuesService {
           orderBy: { lastSeenAt: "desc" },
           skip,
           take,
-          include: { repository: REPOSITORY_SELECT },
+          include: ISSUE_INCLUDE,
         }),
         tx.issue.count({ where }),
       ]),
@@ -111,7 +147,7 @@ export class IssuesService {
       tx.issue.findFirst({
         where: { id, tenantId },
         include: {
-          repository: REPOSITORY_SELECT,
+          ...ISSUE_INCLUDE,
           signals: { orderBy: { occurredAt: "asc" } },
         },
       }),
@@ -209,13 +245,13 @@ export class IssuesService {
     return this.get(tenantId, issueId);
   }
 
-  /** Ship step: opens the pull request for a READY issue via the pr queue. */
+  /** Ship step: opens the pull request via the pr queue (READY or TICKETED). */
   async shipPr(tenantId: string, issueId: string): Promise<{ accepted: true }> {
     const issue = await this.loadIssue(tenantId, issueId);
 
-    if (issue.status !== "READY") {
+    if (issue.status !== "READY" && issue.status !== "TICKETED") {
       throw new ValidationError(
-        `Only ready reports can be shipped (current: ${issue.status})`,
+        `Only ready or ticketed reports can open a pull request (current: ${issue.status})`,
       );
     }
 
@@ -223,6 +259,28 @@ export class IssuesService {
       "pr",
       { tenantId, issueId },
       { jobId: `ship-${issueId}-pr` },
+    );
+
+    return { accepted: true };
+  }
+
+  /** Ship step: creates the Jira ticket via the ticket queue. */
+  async createTicket(
+    tenantId: string,
+    issueId: string,
+  ): Promise<{ accepted: true }> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (!["READY", "TICKETED", "PR_OPENED"].includes(issue.status)) {
+      throw new ValidationError(
+        `Only ready, ticketed or shipped reports can get a ticket (current: ${issue.status})`,
+      );
+    }
+
+    await this.publisher.publish(
+      "ticket",
+      { tenantId, issueId },
+      { jobId: `ticket-${issueId}-create` },
     );
 
     return { accepted: true };

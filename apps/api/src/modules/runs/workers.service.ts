@@ -13,9 +13,12 @@ import {
   QUEUE_NAMES,
   type QueueName,
   type RunStageJob,
+  type ScanJob,
   type ShipPrJob,
+  type TicketJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
+import { JiraScanService } from "../jira/jira-scan.service.ts";
 import { RunOrchestrator } from "./run-orchestrator.service.ts";
 
 /**
@@ -32,6 +35,7 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly orchestrator: RunOrchestrator,
+    private readonly jiraScan: JiraScanService,
     config: ConfigService,
   ) {
     this.connection = new Redis(config.getOrThrow<string>("REDIS_URL"), {
@@ -91,6 +95,12 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
         return this.orchestrator.handleValidate(data as RunStageJob);
       case "pr":
         return this.orchestrator.handleShipPr(data as ShipPrJob);
+      case "ticket":
+        return this.orchestrator.handleCreateTicket(data as TicketJob);
+      case "scan": {
+        await this.jiraScan.run(data as ScanJob);
+        return;
+      }
     }
   }
 }

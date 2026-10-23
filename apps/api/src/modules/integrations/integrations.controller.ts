@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -81,5 +83,16 @@ export class IntegrationsController {
     @Param("id") id: string,
   ) {
     return this.integrations.remove(principal.tenantId, id);
+  }
+
+  @Post(":id/scan")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles("OWNER", "ADMIN")
+  @Scopes("integrations:write")
+  @ApiOperation({
+    summary: "Scan a Jira source for existing items and import them",
+  })
+  scan(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.integrations.requestScan(principal.tenantId, id);
   }
 }

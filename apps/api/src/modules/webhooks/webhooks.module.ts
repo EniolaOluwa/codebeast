@@ -4,6 +4,7 @@ import { IntegrationsModule } from "../integrations/integrations.module.ts";
 import { CorrelationService } from "./correlation.service.ts";
 import { PullRequestSyncService } from "./pull-request-sync.service.ts";
 import { RawBodyInitializer } from "./raw-body.ts";
+import { SignalIngestService } from "./signal-ingest.service.ts";
 import { WebhookPipelineService } from "./webhook-pipeline.service.ts";
 import { WebhooksController } from "./webhooks.controller.ts";
 
@@ -15,7 +16,8 @@ import { WebhooksController } from "./webhooks.controller.ts";
     WebhookPipelineService,
     CorrelationService,
     PullRequestSyncService,
+    SignalIngestService,
   ],
-  exports: [WebhookPipelineService],
+  exports: [WebhookPipelineService, SignalIngestService],
 })
 export class WebhooksModule {}

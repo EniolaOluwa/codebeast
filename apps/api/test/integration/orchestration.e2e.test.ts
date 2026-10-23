@@ -15,6 +15,7 @@ import {
 } from "../../src/clients/agent.client.ts";
 import { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
 import { QUEUE_PUBLISHER } from "../../src/queues/queue.types.ts";
+import { codeOk, planOk, validation } from "../support/agent-fixtures.ts";
 import { createTestApp } from "../support/app.ts";
 import { getTestDatabase, type TestDatabase } from "../support/database.ts";
 import { dockerAvailable } from "../support/docker.ts";
@@ -24,41 +25,6 @@ import {
   createTenantFixture,
 } from "../support/factories.ts";
 import { drainQueue, InMemoryQueue } from "../support/in-memory-queue.ts";
-
-const planOk = () => ({
-  ok: true as const,
-  value: {
-    rootCause: "row is undefined before the guard",
-    filesToInspect: ["src/export.ts"],
-    changeStrategy: "add an early return",
-    testsToRun: ["src/export.test.ts"],
-    confidence: 0.9,
-    needsMoreContext: false,
-  },
-});
-
-const codeOk = () => ({
-  ok: true as const,
-  value: {
-    changes: [
-      { path: "src/export.ts", oldContent: "", newContent: "// fixed" },
-    ],
-    commitMessage: "fix: export",
-    testsToRun: ["src/export.test.ts"],
-    rationale: "guard",
-  },
-});
-
-const validation = (status: "PASSED" | "FAILED" | "ERRORED") => ({
-  ok: true as const,
-  value: {
-    status,
-    testsRun: ["src/export.test.ts"],
-    lintPassed: status === "PASSED",
-    typesPassed: status === "PASSED",
-    output: status === "PASSED" ? "" : `${status} output`,
-  },
-});
 
 /**
  * Phase 4 acceptance gate: ingest → coalesced triage → plan → code → validate

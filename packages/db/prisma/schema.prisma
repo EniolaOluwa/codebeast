@@ -39,6 +39,7 @@ enum IssueStatus {
   TRIAGED
   READY
   RUNNING
+  TICKETED
   PR_OPENED
   RESOLVED
   IGNORED
@@ -113,6 +114,7 @@ model Tenant {
   slackWorkspace     SlackWorkspace?
   webhookEvents      WebhookEvent[]
   issues             Issue[]
+  tickets            Ticket[]
   issueSignals       IssueSignal[]
   runs               Run[]
   plans              Plan[]
@@ -271,9 +273,27 @@ model Issue {
   repository     Repository?   @relation(fields: [repositoryId], references: [id])
   signals        IssueSignal[]
   runs           Run[]
+  ticket         Ticket?
 
   @@index([tenantId, status])
   @@index([tenantId, correlationKey, lastSeenAt])
+}
+
+model Ticket {
+  id         String   @id @default(cuid())
+  tenantId   String
+  issueId    String   @unique
+  key        String
+  url        String
+  projectKey String
+  issueType  String
+  summary    String
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  issue      Issue    @relation(fields: [issueId], references: [id])
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
 }
 
 model IssueSignal {

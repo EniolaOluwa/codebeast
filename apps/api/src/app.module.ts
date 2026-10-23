@@ -22,7 +22,9 @@ import { AuthModule } from "./modules/auth/auth.module.ts";
 import { HealthModule } from "./modules/health/health.module.ts";
 import { IntegrationsModule } from "./modules/integrations/integrations.module.ts";
 import { IssuesModule } from "./modules/issues/issues.module.ts";
+import { JiraModule } from "./modules/jira/jira.module.ts";
 import { MembersModule } from "./modules/members/members.module.ts";
+import { OverviewModule } from "./modules/overview/overview.module.ts";
 import { RepositoriesModule } from "./modules/repositories/repositories.module.ts";
 import { RunsModule } from "./modules/runs/runs.module.ts";
 import { WebhooksModule } from "./modules/webhooks/webhooks.module.ts";
@@ -46,6 +48,7 @@ import { QueuesModule } from "./queues/queues.module.ts";
       { path: "v1", module: IntegrationsModule },
       { path: "v1", module: IssuesModule },
       { path: "v1", module: RunsModule },
+      { path: "v1", module: OverviewModule },
       { path: "v1", module: WebhooksModule },
     ]),
     PrismaModule,
@@ -62,6 +65,8 @@ import { QueuesModule } from "./queues/queues.module.ts";
     WebhooksModule,
     IssuesModule,
     RunsModule,
+    JiraModule,
+    OverviewModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

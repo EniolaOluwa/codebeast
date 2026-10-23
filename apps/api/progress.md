@@ -26,7 +26,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 3   | Ingestion           | `[x]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
 | 4   | Orchestration       | `[x]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
 | 5   | Delivery            | `[x]`  | runs read API; GitHub client + `PullRequest`; compute/ship split (`READY`); PR status sync; issue retry/ignore/approve                                  |
-| 5.5 | Jira bidirectional  | `[ ]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
+| 5.5 | Jira bidirectional  | `[x]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
 | 6   | Console (design.md) | `[ ]`  | `@repo/design-tokens`, Tailwind/shadcn, landing redesign, shell, Reports list/detail, Sources, Settings, BFF auth                                       |
 | 7   | Sources             | `[ ]`  | Discord + Freshdesk ingestion                                                                                                                           |
 | 8   | Rules               | `[ ]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
@@ -95,9 +95,12 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 5.5 — Jira bidirectional
 
-- [ ] `Ticket` model + Jira create client (`POST /rest/api/3/issue`) + preview payload
-- [ ] Jira scan (JQL-configured) → shared `IngestSignalService` (extracted from the webhook pipeline)
-- [ ] `GET /v1/overview` (counts, needs-review list, source health)
+- [x] `Ticket` model (+ `TICKETED` issue status) with RLS/grants migration
+- [x] `JiraClient` seam: `StubJiraClient` (default) + `JiraApiClient` (REST v3, ADF descriptions, env-gated by `JIRA_CLIENT_MODE=api`)
+- [x] Destination: `POST /v1/issues/:id/ticket` via the `ticket` queue; evidence-bearing description; idempotent per issue
+- [x] Source: `POST /v1/integrations/:id/scan` via the `scan` queue → JQL scan → `SignalIngestService` (shared with future Discord/Freshdesk pollers)
+- [x] `GET /v1/overview` — 7-day counts, needs-review list, source health (`overview:read` scope)
+- [x] e2e: ticket idempotency, ticket+PR both recorded, scan import + replay dedupe, overview before/after shipping
 
 ## Phase 6 — Console (design.md)
 
@@ -131,4 +134,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 5.5**: Jira bidirectional — `Ticket` model + Jira create client (destination), Jira scan via the shared ingest service (source), `GET /v1/overview`.
+Start **Phase 6**: Console per design.md — `@repo/design-tokens`, Tailwind/shadcn, landing redesign, app shell, Reports list/detail, Sources, Settings, BFF auth (ADR-010).

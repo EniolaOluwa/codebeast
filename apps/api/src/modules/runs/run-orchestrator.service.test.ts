@@ -99,6 +99,7 @@ function makeHarness() {
     validationRun: { create: vi.fn() },
     issue: { update: vi.fn(), findFirst: vi.fn() },
     pullRequest: { findUnique: vi.fn(), createMany: vi.fn() },
+    ticket: { createMany: vi.fn() },
   };
 
   const prisma = {
@@ -141,6 +142,22 @@ function makeHarness() {
     ),
   };
 
+  const jira = {
+    createIssue: vi.fn(
+      async (_input: {
+        tenantId: string;
+        summary: string;
+        description: string;
+      }) => ({
+        key: "ENG-201",
+        url: "https://stub.atlassian.net/browse/ENG-201",
+        projectKey: "ENG",
+        issueType: "Bug",
+      }),
+    ),
+    scan: vi.fn(async (): Promise<never[]> => []),
+  };
+
   const publisher = new RecordingPublisher();
 
   const config = {
@@ -154,10 +171,11 @@ function makeHarness() {
     agent,
     publisher,
     github as never,
+    jira as never,
     config,
   );
 
-  return { orchestrator, prisma, tx, triage, agent, github, publisher };
+  return { orchestrator, prisma, tx, triage, agent, github, jira, publisher };
 }
 
 describe("RunOrchestrator.handleIngest", () => {
@@ -570,5 +588,98 @@ describe("RunOrchestrator.handleShipPr", () => {
     await expect(
       orchestrator.handleShipPr({ tenantId: "tenant_1", issueId: "issue_1" }),
     ).rejects.toThrow(/no repository mapped/i);
+  });
+});
+
+describe("RunOrchestrator.handleCreateTicket", () => {
+  function ticketingIssue(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "issue_1",
+      status: "READY",
+      title: "Export broken",
+      summary: "Customer reports the export button does nothing.",
+      ticket: null,
+      signals: [
+        {
+          provider: "SENTRY",
+          title: "TypeError in export",
+          url: "https://sentry.io/issues/42",
+        },
+      ],
+      runs: [
+        {
+          rootCause: "row is undefined before the guard",
+          pullRequest: { url: "https://github.com/acme/web/pull/9" },
+        },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("creates the ticket with evidence and flips READY → TICKETED", async () => {
+    const { orchestrator, tx, jira } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(ticketingIssue());
+
+    await orchestrator.handleCreateTicket({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    expect(jira.createIssue).toHaveBeenCalledWith({
+      tenantId: "tenant_1",
+      summary: "Export broken",
+      description: expect.stringContaining("row is undefined before the guard"),
+    });
+    const description = jira.createIssue.mock.calls[0]![0].description;
+    expect(description).toContain("Customer reports the export button");
+    expect(description).toContain("SENTRY: TypeError in export");
+    expect(description).toContain("https://sentry.io/issues/42");
+    expect(description).toContain("https://github.com/acme/web/pull/9");
+
+    expect(tx.ticket.createMany.mock.calls[0]![0].data[0]).toMatchObject({
+      issueId: "issue_1",
+      key: "ENG-201",
+      projectKey: "ENG",
+      issueType: "Bug",
+    });
+    expect(tx.issue.update).toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { status: "TICKETED" },
+    });
+  });
+
+  it("is idempotent: an existing ticket only re-flips the status", async () => {
+    const { orchestrator, tx, jira } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(
+      ticketingIssue({ ticket: { id: "ticket_1" } }),
+    );
+
+    await orchestrator.handleCreateTicket({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    expect(jira.createIssue).not.toHaveBeenCalled();
+    expect(tx.ticket.createMany).not.toHaveBeenCalled();
+    expect(tx.issue.update).toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { status: "TICKETED" },
+    });
+  });
+
+  it("skips issues that cannot be shipped yet", async () => {
+    const { orchestrator, tx, jira } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(ticketingIssue({ status: "RUNNING" }));
+
+    await orchestrator.handleCreateTicket({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    expect(jira.createIssue).not.toHaveBeenCalled();
+    expect(tx.issue.update).not.toHaveBeenCalled();
   });
 });

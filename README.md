@@ -89,6 +89,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 | `INGEST_COALESCE_MS`            | `30000`                           |
 | `GITHUB_APP_ID`                 | (optional — stub client if unset) |
 | `GITHUB_APP_PRIVATE_KEY_BASE64` | (optional)                        |
+| `JIRA_CLIENT_MODE`              | `stub` (set `api` for real Jira)  |
 
 `packages/db/.env` (from `packages/db/.env.example`) holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
 

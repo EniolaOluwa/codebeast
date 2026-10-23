@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import type {
   Integration,
   IntegrationCreateInput,
@@ -7,10 +7,18 @@ import type {
 } from "@repo/types";
 
 import { CryptoService } from "../../common/crypto/crypto.service.ts";
-import { ConflictError, NotFoundError } from "../../common/errors/errors.ts";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "../../common/errors/errors.ts";
 import { paginated, skipTake } from "../../common/pagination.ts";
 import { isUniqueViolation } from "../../common/prisma-errors.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
+import {
+  QUEUE_PUBLISHER,
+  type QueuePublisher,
+} from "../../queues/queue.types.ts";
 
 export interface IntegrationRow {
   id: string;
@@ -46,6 +54,7 @@ export class IntegrationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
+    @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
   ) {}
 
   async create(
@@ -181,6 +190,36 @@ export class IntegrationsService {
       await tx.integration.delete({ where: { id: existing.id } });
       return { success: true };
     });
+  }
+
+  /** Queues a backfill scan for a source integration (Jira today). */
+  async requestScan(tenantId: string, id: string): Promise<{ accepted: true }> {
+    const integration = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.integration.findFirst({
+        where: { id, tenantId },
+        select: { id: true, type: true, enabled: true },
+      }),
+    );
+
+    if (!integration) {
+      throw new NotFoundError("Integration");
+    }
+
+    if (integration.type !== "JIRA") {
+      throw new ValidationError("Only Jira sources support scanning");
+    }
+
+    if (!integration.enabled) {
+      throw new ValidationError("This integration is disabled");
+    }
+
+    await this.publisher.publish(
+      "scan",
+      { tenantId, integrationId: integration.id },
+      { jobId: `scan-${integration.id}` },
+    );
+
+    return { accepted: true };
   }
 
   /** Decrypts the stored secret bag for a resolved integration row. */

@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { MAX_ATTEMPTS, type RunStatus } from "@repo/types";
+import { MAX_ATTEMPTS, type RunStatus, truncateToBytes } from "@repo/types";
 
 import {
   AGENT_CLIENT,
@@ -11,6 +11,7 @@ import {
   GITHUB_CLIENT,
   type GitHubClient,
 } from "../../clients/github.client.ts";
+import { JIRA_CLIENT, type JiraClient } from "../../clients/jira.client.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import {
   type IngestJob,
@@ -19,6 +20,7 @@ import {
   type QueuePublisher,
   type RunStageJob,
   type ShipPrJob,
+  type TicketJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
 import { TriageService } from "../triage/triage.service.ts";
@@ -69,6 +71,7 @@ export class RunOrchestrator {
     @Inject(AGENT_CLIENT) private readonly agent: AgentClient,
     @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
     @Inject(GITHUB_CLIENT) private readonly github: GitHubClient,
+    @Inject(JIRA_CLIENT) private readonly jira: JiraClient,
     config: ConfigService,
   ) {
     this.coalesceMs = config.getOrThrow<number>("INGEST_COALESCE_MS");
@@ -373,9 +376,9 @@ export class RunOrchestrator {
       return;
     }
 
-    if (issue.status !== "READY") {
+    if (issue.status !== "READY" && issue.status !== "TICKETED") {
       this.logger.warn(
-        `ship skipped: issue ${issue.id} is ${issue.status}, expected READY`,
+        `ship skipped: issue ${issue.id} is ${issue.status}, expected READY or TICKETED`,
       );
       return;
     }
@@ -466,6 +469,103 @@ export class RunOrchestrator {
     });
 
     this.logger.log(`opened ${created.url} for issue ${issue.id}`);
+  }
+
+  /**
+   * Ship step: creates the Jira ticket for a READY report (or re-flips the
+   * status when the ticket already exists). Idempotent; queue retries apply.
+   */
+  async handleCreateTicket(job: TicketJob): Promise<void> {
+    const issue = await this.prisma.withTenant(job.tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id: job.issueId, tenantId: job.tenantId },
+        include: {
+          ticket: { select: { id: true } },
+          signals: {
+            orderBy: { occurredAt: "desc" },
+            take: 10,
+            select: { provider: true, title: true, url: true },
+          },
+          runs: {
+            orderBy: { createdAt: "desc" },
+            take: 1,
+            select: {
+              rootCause: true,
+              pullRequest: { select: { url: true } },
+            },
+          },
+        },
+      }),
+    );
+
+    if (!issue) {
+      this.logger.warn(`ticket skipped: issue ${job.issueId} not found`);
+      return;
+    }
+
+    if (issue.ticket) {
+      await this.flipToTicketed(job.tenantId, issue.id, issue.status);
+      return;
+    }
+
+    if (!["READY", "TICKETED", "PR_OPENED"].includes(issue.status)) {
+      this.logger.warn(`ticket skipped: issue ${issue.id} is ${issue.status}`);
+      return;
+    }
+
+    const created = await this.jira.createIssue({
+      tenantId: job.tenantId,
+      summary: issue.title,
+      description: buildTicketDescription({
+        summary: issue.summary,
+        signals: issue.signals,
+        rootCause: issue.runs[0]?.rootCause ?? null,
+        pullRequestUrl: issue.runs[0]?.pullRequest?.url ?? null,
+      }),
+    });
+
+    await this.prisma.withTenant(job.tenantId, async (tx) => {
+      await tx.ticket.createMany({
+        data: [
+          {
+            tenantId: job.tenantId,
+            issueId: issue.id,
+            key: created.key,
+            url: created.url,
+            projectKey: created.projectKey,
+            issueType: created.issueType,
+            summary: issue.title,
+          },
+        ],
+        skipDuplicates: true,
+      });
+
+      if (issue.status === "READY") {
+        await tx.issue.update({
+          where: { id: issue.id },
+          data: { status: "TICKETED" },
+        });
+      }
+    });
+
+    this.logger.log(`created ticket ${created.key} for issue ${issue.id}`);
+  }
+
+  private async flipToTicketed(
+    tenantId: string,
+    issueId: string,
+    status: string,
+  ): Promise<void> {
+    if (status !== "READY" && status !== "TICKETED") {
+      return;
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "TICKETED" },
+      });
+    });
   }
 
   private async markShipped(tenantId: string, issueId: string): Promise<void> {
@@ -657,4 +757,33 @@ function toRunState(run: {
     maxAttempts: run.maxAttempts,
     replans: run.replans,
   };
+}
+
+const TICKET_DESCRIPTION_BYTES = 30_000;
+
+function buildTicketDescription(input: {
+  summary: string;
+  signals: { provider: string; title: string; url: string | null }[];
+  rootCause: string | null;
+  pullRequestUrl: string | null;
+}): string {
+  const lines = [input.summary, "", "Signals:"];
+
+  for (const signal of input.signals) {
+    lines.push(
+      `- ${signal.provider}: ${signal.title}${signal.url ? ` (${signal.url})` : ""}`,
+    );
+  }
+
+  if (input.rootCause) {
+    lines.push("", "Root cause:", input.rootCause);
+  }
+
+  if (input.pullRequestUrl) {
+    lines.push("", `Pull request: ${input.pullRequestUrl}`);
+  }
+
+  lines.push("", "_Created by CodeBeast._");
+
+  return truncateToBytes(lines.join("\n"), TICKET_DESCRIPTION_BYTES);
 }

@@ -21,51 +21,13 @@ import {
 import { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
 import { githubSignature } from "../../src/modules/webhooks/signatures.ts";
 import { QUEUE_PUBLISHER } from "../../src/queues/queue.types.ts";
+import { codeOk, passedValidation, planOk } from "../support/agent-fixtures.ts";
 import { createTestApp } from "../support/app.ts";
 import { getTestDatabase, type TestDatabase } from "../support/database.ts";
 import { dockerAvailable } from "../support/docker.ts";
-import {
-  createIssueFixture,
-  createRepositoryFixture,
-  createSignalFixture,
-  uniqueSuffix,
-} from "../support/factories.ts";
+import { uniqueSuffix } from "../support/factories.ts";
 import { drainQueue, InMemoryQueue } from "../support/in-memory-queue.ts";
-
-const planOk = () => ({
-  ok: true as const,
-  value: {
-    rootCause: "row is undefined before the guard",
-    filesToInspect: ["src/export.ts"],
-    changeStrategy: "add an early return",
-    testsToRun: ["src/export.test.ts"],
-    confidence: 0.9,
-    needsMoreContext: false,
-  },
-});
-
-const codeOk = () => ({
-  ok: true as const,
-  value: {
-    changes: [
-      { path: "src/export.ts", oldContent: "", newContent: "// fixed" },
-    ],
-    commitMessage: "fix: guard empty exports",
-    testsToRun: ["src/export.test.ts"],
-    rationale: "guard clause",
-  },
-});
-
-const passedValidation = () => ({
-  ok: true as const,
-  value: {
-    status: "PASSED" as const,
-    testsRun: ["src/export.test.ts"],
-    lintPassed: true,
-    typesPassed: true,
-    output: "",
-  },
-});
+import { seedReadyReport } from "../support/ready-report.ts";
 
 /**
  * Phase 5 acceptance gate: compute ends at READY, the ship action opens a PR
@@ -124,62 +86,17 @@ describe.runIf(dockerAvailable)("delivery (e2e)", () => {
     return app.get(RunOrchestrator);
   }
 
-  async function seedReadyReport(): Promise<{
-    tenantId: string;
-    issueId: string;
-    runId: string;
-    auth: { authorization: string };
-    repositoryFullName: string;
-  }> {
-    const email = `${uniqueSuffix("delivery")}@example.com`;
-    const register = await app.inject({
-      method: "POST",
-      url: "/v1/auth/register",
-      payload: { email, password: "password123" },
+  function reports() {
+    return seedReadyReport({
+      app,
+      db,
+      queue,
+      orchestrator: orchestrator(),
     });
-    expect(register.statusCode).toBe(201);
-    const accessToken: string = register.json().accessToken;
-    const auth = { authorization: `Bearer ${accessToken}` };
-
-    const me = await app.inject({
-      method: "GET",
-      url: "/v1/auth/me",
-      headers: auth,
-    });
-    const tenantId: string = me.json().tenantId;
-
-    const repository = await createRepositoryFixture(db.admin, tenantId, {
-      fullName: `acme/${uniqueSuffix("web")}`,
-    });
-    const issue = await createIssueFixture(db.admin, tenantId);
-    await createSignalFixture(db.admin, {
-      tenantId,
-      issueId: issue.id,
-    });
-    await db.admin.issue.update({
-      where: { id: issue.id },
-      data: { repositoryId: repository.id },
-    });
-
-    await orchestrator().handleIngest({ tenantId, issueId: issue.id });
-    await drainQueue(queue, orchestrator());
-
-    const run = await db.admin.run.findFirstOrThrow({
-      where: { issueId: issue.id },
-    });
-    expect(run.status).toBe("SUCCEEDED");
-
-    return {
-      tenantId,
-      issueId: issue.id,
-      runId: run.id,
-      auth,
-      repositoryFullName: repository.fullName,
-    };
   }
 
   it("ships a ready report: PR recorded, issue PR_OPENED, runs readable", async () => {
-    const report = await seedReadyReport();
+    const report = await reports();
 
     const ship = await app.inject({
       method: "POST",
@@ -238,7 +155,7 @@ describe.runIf(dockerAvailable)("delivery (e2e)", () => {
   });
 
   it("approves a shipped report and rejects double-approval", async () => {
-    const report = await seedReadyReport();
+    const report = await reports();
 
     await app.inject({
       method: "POST",
@@ -269,7 +186,7 @@ describe.runIf(dockerAvailable)("delivery (e2e)", () => {
   });
 
   it("ignores a report and cancels its in-flight run (jobs no-op)", async () => {
-    const report = await seedReadyReport();
+    const report = await reports();
 
     // Start a fresh run directly so the issue is RUNNING with queued stages.
     await db.admin.issue.update({
@@ -306,7 +223,7 @@ describe.runIf(dockerAvailable)("delivery (e2e)", () => {
   });
 
   it("retries an escalated report with a fresh run that reaches READY", async () => {
-    const report = await seedReadyReport();
+    const report = await reports();
 
     await db.admin.issue.update({
       where: { id: report.issueId },
@@ -341,7 +258,7 @@ describe.runIf(dockerAvailable)("delivery (e2e)", () => {
   });
 
   it("refuses to ship or approve reports in the wrong state", async () => {
-    const report = await seedReadyReport();
+    const report = await reports();
 
     await db.admin.issue.update({
       where: { id: report.issueId },
@@ -364,7 +281,7 @@ describe.runIf(dockerAvailable)("delivery (e2e)", () => {
   });
 
   it("syncs pull-request state from signed GitHub webhooks (and never ingests them)", async () => {
-    const report = await seedReadyReport();
+    const report = await reports();
 
     await app.inject({
       method: "POST",

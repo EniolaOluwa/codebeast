@@ -13,6 +13,8 @@ export const QUEUE_NAMES = [
   "code",
   "validate",
   "pr",
+  "ticket",
+  "scan",
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
@@ -40,6 +42,18 @@ export interface ShipPrJob {
   issueId: string;
 }
 
+/** Ship request: create the Jira ticket for a READY issue. */
+export interface TicketJob {
+  tenantId: string;
+  issueId: string;
+}
+
+/** Backfill request: scan a source integration for existing items to fix. */
+export interface ScanJob {
+  tenantId: string;
+  integrationId: string;
+}
+
 export interface QueueJobPayloads {
   ingest: IngestJob;
   triage: TriageJob;
@@ -47,6 +61,8 @@ export interface QueueJobPayloads {
   code: RunStageJob;
   validate: RunStageJob;
   pr: ShipPrJob;
+  ticket: TicketJob;
+  scan: ScanJob;
 }
 
 export interface PublishOptions {

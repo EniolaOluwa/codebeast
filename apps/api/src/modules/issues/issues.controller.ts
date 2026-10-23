@@ -102,4 +102,17 @@ export class IssuesController {
   ) {
     return this.issues.shipPr(principal.tenantId, id);
   }
+
+  @Post(":id/ticket")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Scopes("issues:write")
+  @ApiOperation({
+    summary: "Ship a ready report: create its Jira ticket",
+  })
+  createTicket(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.createTicket(principal.tenantId, id);
+  }
 }
