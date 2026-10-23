@@ -83,3 +83,22 @@ rather than rewrite. Status: `Accepted`, `Superseded`, `Proposed`.
   signature/idempotency, run transitions.
 - **Consequences:** Adds `testcontainers` + `@testcontainers/*` dev deps; slower but
   deterministic and isolated.
+
+## ADR-009 — RLS policies read per-transaction GUC "claims"
+
+- **Status:** Accepted
+- **Context:** Auth-time lookups (API key by prefix, refresh token by hash, membership by
+  user) and webhook tenant resolution happen before a tenant is known. A blanket
+  `tenant_id = current_setting('app.current_tenant')` policy would make those paths
+  impossible; disabling RLS on credential tables would remove the backstop.
+- **Decision:** Every tenant-scoped table is FORCE RLS. Policies grant the standard
+  tenant check plus, on credential/routing tables, a single-row "claim" lookup keyed by
+  a GUC that `PrismaService.withRls` sets transaction-locally:
+  `app.current_user` (Membership), `app.current_api_key_prefix` (ApiKey),
+  `app.current_refresh_token_hash` (RefreshToken), `app.current_integration_external_id`
+  / `app.current_integration_id` (Integration). Unset GUCs read as NULL, so every policy
+  fails closed.
+- **Consequences:** Credential lookups must go through `withRls` with the matching
+  claim; plain queries see nothing. `WITH CHECK` still requires the acting tenant, so a
+  claim can never write across tenants. Dev Postgres (superuser) bypasses RLS —
+  isolation tests must use `codebeast_app` (see `errors.md` E-002).

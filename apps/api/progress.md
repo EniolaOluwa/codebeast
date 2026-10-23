@@ -5,9 +5,9 @@ Tracking doc for the control-plane MVP. Status legend: `[ ]` todo, `[~]` in prog
 
 ## Snapshot
 
-- **Branch:** `feat-backend/api-mvp` (recommended; based on `feat-backend/develop`)
+- **Branch:** `feat/api-develop`
 - **Milestone:** Control-plane MVP
-- **Updated:** 2026-10-19
+- **Updated:** 2026-10-23
 - **Baseline green:** `pnpm --filter @repo/api lint && check-types && test`
 
 ## Locked decisions
@@ -20,8 +20,8 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 | #   | Phase             | Status | Acceptance criteria                                                                                                                                     |
 | --- | ----------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0   | Contracts         | `[ ]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
-| 1   | Data foundation   | `[ ]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
+| 0   | Contracts         | `[x]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
+| 1   | Data foundation   | `[x]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
 | 2   | Identity & access | `[ ]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
 | 3   | Ingestion         | `[ ]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
 | 4   | Orchestration     | `[ ]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
@@ -30,20 +30,23 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 0 — Contracts
 
-- [ ] `errorEnvelope`, `paginatedResponse` schemas
-- [ ] `issueContext`, `planBlueprint`, `patchSubmission`, `validationResult`
-- [ ] `runStatus` + run/issue/integration enums
-- [ ] Convert `@repo/types` interfaces to Zod; keep package name
+- [x] `errorEnvelope`, `paginatedResponse` schemas
+- [x] `issueContext`, `planBlueprint`, `patchSubmission`, `validationResult`
+- [x] `runStatus` + run/issue/integration enums
+- [x] Convert `@repo/types` interfaces to Zod; keep package name
+- [x] Build output (`dist/`) + vitest suite for `@repo/types`
 
 ## Phase 1 — Data foundation
 
-- [ ] Prisma models: Tenant, Membership, ApiKey, RefreshToken, Repository,
+- [x] Prisma models: Tenant, Membership, ApiKey, RefreshToken, Repository,
       Integration, GitHubInstallation, SlackWorkspace, WebhookEvent, Issue,
       IssueSignal, Run, Plan, Patch, FileChange, ValidationRun, PullRequest, AuditLog
-- [ ] Additive migration + RLS policies + `codebeast_app` role
-- [ ] `TenantContext` (AsyncLocalStorage) + `PrismaService.withTenant`
-- [ ] `CryptoService` (AES-256-GCM) + config/env additions
-- [ ] Extend `env.schema.ts` and `.env.example`
+- [x] Additive migration + RLS policies + `codebeast_app` role (ADR-009 claims)
+- [x] `TenantContext` (AsyncLocalStorage) + `PrismaService.withTenant`/`withRls`
+- [x] `CryptoService` (AES-256-GCM) + config/env additions
+- [x] Extend `env.schema.ts` and `.env.example`
+- [x] Seed (`packages/db/prisma/seed.ts`, demo@codebeast.dev / password123)
+- [x] Testcontainers harness + tenant-isolation integration suite (as `codebeast_app`)
 
 ## Phase 2 — Identity & access
 
@@ -81,4 +84,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 0**: freeze contracts and add Zod schemas to `@repo/types`.
+Start **Phase 2**: identity & access (auth module, API keys, members, guards).
