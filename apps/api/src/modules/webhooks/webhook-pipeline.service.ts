@@ -25,6 +25,7 @@ import {
   type IntegrationRow,
   IntegrationsService,
 } from "../integrations/integrations.service.ts";
+import { RuleEngine } from "../rules/rule-engine.service.ts";
 import { CorrelationService } from "./correlation.service.ts";
 import {
   freshdeskEnvelopeToTicket,
@@ -55,6 +56,7 @@ interface IngestOutcome {
   duplicate: boolean;
   issueId: string | null;
   signalId: string | null;
+  issueCreated: boolean;
   eventId: string;
 }
 
@@ -77,6 +79,7 @@ export class WebhookPipelineService {
     private readonly integrations: IntegrationsService,
     private readonly correlation: CorrelationService,
     private readonly pullRequestSync: PullRequestSyncService,
+    private readonly ruleEngine: RuleEngine,
     @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
     config: ConfigService,
   ) {
@@ -129,6 +132,7 @@ export class WebhookPipelineService {
             duplicate: true,
             issueId: null,
             signalId: null,
+            issueCreated: false,
             eventId: event.id,
           };
         }
@@ -154,12 +158,36 @@ export class WebhookPipelineService {
           duplicate: false,
           issueId: correlated.issueId,
           signalId: correlated.signalId,
+          issueCreated: correlated.issueCreated,
           eventId: event.id,
         };
       },
     );
 
     if (!outcome.duplicate && outcome.issueId) {
+      // Detection rules gate brand-new reports (design.md §8.5).
+      if (outcome.issueCreated) {
+        const detection = await this.ruleEngine.evaluateDetection(tenantId, {
+          providers: [signal.provider],
+          signalCount: 1,
+          title: signal.title,
+        });
+
+        if (detection.action === "IGNORE") {
+          await this.markIgnored(tenantId, outcome.issueId);
+
+          this.logger.log(
+            `detection rule ${detection.ruleId} ignored issue ${outcome.issueId}`,
+          );
+
+          return {
+            accepted: true,
+            duplicate: false,
+            issueId: outcome.issueId,
+          };
+        }
+      }
+
       await this.enqueue(tenantId, outcome);
     }
 
@@ -168,6 +196,15 @@ export class WebhookPipelineService {
       duplicate: outcome.duplicate,
       ...(outcome.issueId ? { issueId: outcome.issueId } : {}),
     };
+  }
+
+  private async markIgnored(tenantId: string, issueId: string): Promise<void> {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "IGNORED" },
+      });
+    });
   }
 
   private async handlePullRequestSync(

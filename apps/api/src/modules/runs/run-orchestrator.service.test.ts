@@ -82,6 +82,7 @@ function runRow(overrides: Record<string, unknown> = {}) {
     replans: 0,
     maxAttempts: 3,
     lastError: null,
+    confidence: null,
     ...overrides,
   };
 }
@@ -98,7 +99,11 @@ function makeHarness() {
     patch: { create: vi.fn(), findFirst: vi.fn() },
     validationRun: { create: vi.fn() },
     issue: { update: vi.fn(), findFirst: vi.fn() },
-    pullRequest: { findUnique: vi.fn(), createMany: vi.fn() },
+    pullRequest: {
+      findUnique: vi.fn(),
+      createMany: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
+    },
     ticket: { createMany: vi.fn() },
   };
 
@@ -160,6 +165,11 @@ function makeHarness() {
 
   const publisher = new RecordingPublisher();
 
+  const ruleEngine = {
+    evaluateDetection: vi.fn().mockResolvedValue({ action: "DETECT" as const }),
+    evaluateAutomation: vi.fn().mockResolvedValue(null),
+  };
+
   const config = {
     getOrThrow: (key: string): unknown =>
       key === "INGEST_COALESCE_MS" ? 30_000 : undefined,
@@ -172,10 +182,21 @@ function makeHarness() {
     publisher,
     github as never,
     jira as never,
+    ruleEngine as never,
     config,
   );
 
-  return { orchestrator, prisma, tx, triage, agent, github, jira, publisher };
+  return {
+    orchestrator,
+    prisma,
+    tx,
+    triage,
+    agent,
+    github,
+    jira,
+    ruleEngine,
+    publisher,
+  };
 }
 
 describe("RunOrchestrator.handleIngest", () => {
@@ -203,6 +224,7 @@ describe("RunOrchestrator.handleTriage", () => {
   it("creates a run and publishes the first plan job", async () => {
     const { orchestrator, tx, publisher } = makeHarness();
 
+    tx.issue.findFirst.mockResolvedValue({ status: "NEW" });
     tx.run.findFirst.mockResolvedValue(null);
     tx.run.create.mockResolvedValue({ id: "run_1" });
 
@@ -238,6 +260,7 @@ describe("RunOrchestrator.handleTriage", () => {
   it("skips when a run is already open for the issue", async () => {
     const { orchestrator, tx, publisher, triage } = makeHarness();
 
+    tx.issue.findFirst.mockResolvedValue({ status: "NEW" });
     tx.run.findFirst.mockResolvedValue({ id: "run_open" });
 
     await orchestrator.handleTriage({
@@ -246,6 +269,22 @@ describe("RunOrchestrator.handleTriage", () => {
     });
 
     expect(tx.run.create).not.toHaveBeenCalled();
+    expect(publisher.jobs).toHaveLength(0);
+    expect(triage.buildIssueContext).not.toHaveBeenCalled();
+  });
+
+  it("skips reports that are not actionable (ignored, resolved, …)", async () => {
+    const { orchestrator, tx, publisher, triage } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue({ status: "IGNORED" });
+
+    await orchestrator.handleTriage({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    expect(tx.run.create).not.toHaveBeenCalled();
+    expect(tx.run.findFirst).not.toHaveBeenCalled();
     expect(publisher.jobs).toHaveLength(0);
     expect(triage.buildIssueContext).not.toHaveBeenCalled();
   });
@@ -588,6 +627,146 @@ describe("RunOrchestrator.handleShipPr", () => {
     await expect(
       orchestrator.handleShipPr({ tenantId: "tenant_1", issueId: "issue_1" }),
     ).rejects.toThrow(/no repository mapped/i);
+  });
+});
+
+describe("RunOrchestrator automation (rules engine)", () => {
+  function validatingRun(confidence: number | null) {
+    return runRow({ status: "VALIDATING", confidence });
+  }
+
+  const automationActions = {
+    createTicket: true,
+    openPr: true,
+    repositoryId: "repo_1",
+    minConfidence: 0.5,
+    dailyPrLimit: 5,
+  };
+
+  async function runToSuccess() {
+    const harness = makeHarness();
+
+    harness.tx.run.findUnique.mockResolvedValue(validatingRun(0.9));
+    harness.tx.patch.findFirst.mockResolvedValue({
+      ...patch,
+      fileChanges: [{ path: "src/export.ts", oldContent: "", newContent: "x" }],
+    });
+    harness.ruleEngine.evaluateAutomation.mockResolvedValue({
+      ruleId: "rule_1",
+      actions: automationActions,
+    });
+    harness.tx.issue.findFirst.mockResolvedValue({
+      id: "issue_1",
+      title: "Export broken",
+      signalCount: 1,
+      repositoryId: null,
+      ticket: null,
+    });
+
+    await harness.orchestrator.handleValidate({
+      tenantId: "tenant_1",
+      runId: "run_1",
+    });
+
+    return harness;
+  }
+
+  it("publishes ticket and PR jobs when a rule matches, applying its repository", async () => {
+    const { publisher, tx } = await runToSuccess();
+
+    expect(publisher.jobs.map((job) => job.queue)).toEqual(["ticket", "pr"]);
+    expect(publisher.jobs[1]!.options).toEqual({
+      jobId: "ship-issue_1-pr",
+    });
+    expect(tx.issue.update).toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { repositoryId: "repo_1" },
+    });
+  });
+
+  it("skips the PR below the confidence floor but still tickets", async () => {
+    const harness = makeHarness();
+
+    harness.tx.run.findUnique.mockResolvedValue(validatingRun(0.4));
+    harness.tx.patch.findFirst.mockResolvedValue({
+      ...patch,
+      fileChanges: [],
+    });
+    harness.ruleEngine.evaluateAutomation.mockResolvedValue({
+      ruleId: "rule_1",
+      actions: automationActions,
+    });
+    harness.tx.issue.findFirst.mockResolvedValue({
+      id: "issue_1",
+      title: "Export broken",
+      signalCount: 1,
+      repositoryId: "repo_1",
+      ticket: null,
+    });
+
+    await harness.orchestrator.handleValidate({
+      tenantId: "tenant_1",
+      runId: "run_1",
+    });
+
+    expect(harness.publisher.jobs.map((job) => job.queue)).toEqual(["ticket"]);
+  });
+
+  it("skips the PR when the daily limit is reached", async () => {
+    const scoped = makeHarness();
+
+    scoped.tx.run.findUnique.mockResolvedValue(validatingRun(0.9));
+    scoped.tx.patch.findFirst.mockResolvedValue({
+      ...patch,
+      fileChanges: [],
+    });
+    scoped.ruleEngine.evaluateAutomation.mockResolvedValue({
+      ruleId: "rule_1",
+      actions: automationActions,
+    });
+    scoped.tx.issue.findFirst.mockResolvedValue({
+      id: "issue_1",
+      title: "Export broken",
+      signalCount: 1,
+      repositoryId: "repo_1",
+      ticket: null,
+    });
+    scoped.tx.pullRequest.count.mockResolvedValue(5);
+
+    await scoped.orchestrator.handleValidate({
+      tenantId: "tenant_1",
+      runId: "run_1",
+    });
+
+    expect(scoped.publisher.jobs.map((job) => job.queue)).toEqual(["ticket"]);
+  });
+
+  it("does not re-ticket when a ticket already exists", async () => {
+    const harness = makeHarness();
+
+    harness.tx.run.findUnique.mockResolvedValue(validatingRun(0.9));
+    harness.tx.patch.findFirst.mockResolvedValue({
+      ...patch,
+      fileChanges: [],
+    });
+    harness.ruleEngine.evaluateAutomation.mockResolvedValue({
+      ruleId: "rule_1",
+      actions: automationActions,
+    });
+    harness.tx.issue.findFirst.mockResolvedValue({
+      id: "issue_1",
+      title: "Export broken",
+      signalCount: 1,
+      repositoryId: "repo_1",
+      ticket: { id: "ticket_1" },
+    });
+
+    await harness.orchestrator.handleValidate({
+      tenantId: "tenant_1",
+      runId: "run_1",
+    });
+
+    expect(harness.publisher.jobs.map((job) => job.queue)).toEqual(["pr"]);
   });
 });
 

@@ -6,7 +6,6 @@ import { SIGNAL_ENRICHERS } from "../../src/modules/triage/enrichment.service.ts
 import {
   githubSignature,
   sentrySignature,
-  slackSignature,
 } from "../../src/modules/webhooks/signatures.ts";
 import {
   QUEUE_PUBLISHER,
@@ -18,6 +17,7 @@ import { createTestApp } from "../support/app.ts";
 import { getTestDatabase, type TestDatabase } from "../support/database.ts";
 import { dockerAvailable } from "../support/docker.ts";
 import { uniqueSuffix } from "../support/factories.ts";
+import { signedSlackRequest } from "../support/signed-requests.ts";
 
 interface RecordedPublish {
   queue: QueueName;
@@ -106,24 +106,6 @@ describe.runIf(dockerAvailable)("ingestion (e2e)", () => {
 
     expect(res.statusCode).toBe(201);
     return res.json();
-  }
-
-  function signedSlackRequest(
-    teamId: string,
-    body: unknown,
-    secret: string,
-  ): { raw: string; headers: Record<string, string> } {
-    const raw = JSON.stringify(body);
-    const timestamp = String(Math.floor(Date.now() / 1000));
-
-    return {
-      raw,
-      headers: {
-        "content-type": "application/json",
-        "x-slack-request-timestamp": timestamp,
-        "x-slack-signature": slackSignature(secret, timestamp, raw),
-      },
-    };
   }
 
   it("manages repositories", async () => {

@@ -29,7 +29,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 5.5 | Jira bidirectional  | `[x]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
 | 6   | Console (design.md) | `[x]`  | `@repo/design-tokens`, Tailwind, landing redesign, shell, Overview/Reports/Report detail, Sources, Settings, BFF auth                                   |
 | 7   | Sources             | `[x]`  | Discord + Freshdesk ingestion                                                                                                                           |
-| 8   | Rules               | `[ ]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
+| 8   | Rules               | `[x]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
 | 9   | Hardening           | `[ ]`  | audit logs → Activity, readiness (db+redis), metrics, rate limits, stalled-run reaper, raw-payload janitor                                              |
 
 ## Phase 0 — Contracts
@@ -129,9 +129,14 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 8 — Rules
 
-- [ ] detection rules (what becomes a report) + dry-run
-- [ ] automation rules (ticket/PR creation, confidence floor, daily PR limit, auto-approve)
-- [ ] Rules page per design.md §8.5
+- [x] `Rule` model + `RuleKind` enum (RLS/grants migration; parity-tested)
+- [x] Wire contracts: conditions (providers / min signals / title) + kind-specific actions with the PR safety refinement (repository + confidence floor + daily limit are mandatory to validate an openPr rule)
+- [x] `RuleEngine`: ordered evaluation (oldest first, first match wins), detection default = DETECT, dry-run over the last 7 days
+- [x] Detection hooks: webhook pipeline + `SignalIngestService` gate brand-new reports (IGNORE records the report and skips compute); triage only computes NEW/TRIAGED reports
+- [x] Automation hooks: runs reaching READY evaluate automation rules — ticket and/or PR via the existing queues, rule repository applied to the report, confidence floor and tenant-wide daily PR limit enforced
+- [x] `rules:read`/`rules:write` scopes; CRUD + dry-run endpoints
+- [x] Console: Rules page per design.md §8.5 (detection/automation sections, plain-language sentences, enable/disable, dry run, delete, create forms with the PR confirmation checkbox); nav unhidden
+- [x] e2e: CRUD + PR-rail validation, ignore gating, auto-ship, daily-limit skip, dry-run counts
 
 ## Phase 9 — Hardening
 
@@ -143,4 +148,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 8**: Rules — detection + automation engine (what becomes a report; when tickets/PRs auto-create), dry-run, PR limits, Rules page per design.md §8.5.
+Start **Phase 9**: Hardening — audit log interceptor + `GET /v1/audit-logs` → Activity page, readiness (db + redis), metrics, rate limits, stalled-run reaper, raw-payload janitor, Swagger/RCL polish.

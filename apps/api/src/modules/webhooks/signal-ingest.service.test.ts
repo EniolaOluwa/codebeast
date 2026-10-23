@@ -39,9 +39,11 @@ function makeHarness() {
     ),
   };
 
+  const tx = { issue: { update: vi.fn().mockResolvedValue({}) } };
+
   const prisma = {
     withTenant: vi.fn(async (_tenantId: string, fn: (tx: unknown) => unknown) =>
-      fn({}),
+      fn(tx),
     ),
   };
 
@@ -52,13 +54,18 @@ function makeHarness() {
     }),
   };
 
+  const ruleEngine = {
+    evaluateDetection: vi.fn().mockResolvedValue({ action: "DETECT" as const }),
+  };
+
   const service = new SignalIngestService(
     prisma as never,
     correlation as never,
+    ruleEngine as never,
     publisher as never,
   );
 
-  return { service, correlation, jobs };
+  return { service, correlation, ruleEngine, jobs, tx };
 }
 
 describe("SignalIngestService", () => {
@@ -108,5 +115,39 @@ describe("SignalIngestService", () => {
       tenantId: "tenant_1",
       issueId: "issue-ENG-1",
     });
+  });
+
+  it("marks brand-new reports ignored when a detection rule says IGNORE", async () => {
+    const { service, ruleEngine, jobs, tx } = makeHarness();
+
+    ruleEngine.evaluateDetection.mockResolvedValue({
+      action: "IGNORE",
+      ruleId: "rule_1",
+    });
+
+    const outcomes = await service.ingest("tenant_1", [makeSignal("ENG-1")]);
+
+    expect(outcomes[0]).toMatchObject({ ignoredByRule: true });
+    expect(jobs).toHaveLength(0);
+    expect(tx.issue.update).toHaveBeenCalledWith({
+      where: { id: "issue-ENG-1" },
+      data: { status: "IGNORED" },
+    });
+  });
+
+  it("never gates signals that attach to an existing report", async () => {
+    const { service, ruleEngine, correlation, jobs } = makeHarness();
+
+    correlation.correlate.mockResolvedValue({
+      issueId: "issue-ENG-1",
+      signalId: "signal-ENG-1",
+      issueCreated: false,
+      signalAttached: true,
+    });
+
+    await service.ingest("tenant_1", [makeSignal("ENG-1")]);
+
+    expect(ruleEngine.evaluateDetection).not.toHaveBeenCalled();
+    expect(jobs).toHaveLength(1);
   });
 });
