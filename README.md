@@ -10,12 +10,12 @@ every step has a check.
 
 ## What you get
 
-| Service       | URL                   | Notes                            |
-| ------------- | --------------------- | -------------------------------- |
-| Web (Next.js) | http://localhost:3000 | Landing page                     |
-| API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`        |
-| PostgreSQL    | localhost:5434        | Docker container, db `codebeast` |
-| Redis         | localhost:6379        | BullMQ queues (Docker container) |
+| Service       | URL                   | Notes                                   |
+| ------------- | --------------------- | --------------------------------------- |
+| Web (Next.js) | http://localhost:3000 | Landing + console (sign in at `/login`) |
+| API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`               |
+| PostgreSQL    | localhost:5434        | Docker container, db `codebeast`        |
+| Redis         | localhost:6379        | BullMQ queues (Docker container)        |
 
 ## External dependencies
 

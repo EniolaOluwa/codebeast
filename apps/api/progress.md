@@ -27,7 +27,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 4   | Orchestration       | `[x]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
 | 5   | Delivery            | `[x]`  | runs read API; GitHub client + `PullRequest`; compute/ship split (`READY`); PR status sync; issue retry/ignore/approve                                  |
 | 5.5 | Jira bidirectional  | `[x]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
-| 6   | Console (design.md) | `[ ]`  | `@repo/design-tokens`, Tailwind/shadcn, landing redesign, shell, Reports list/detail, Sources, Settings, BFF auth                                       |
+| 6   | Console (design.md) | `[x]`  | `@repo/design-tokens`, Tailwind, landing redesign, shell, Overview/Reports/Report detail, Sources, Settings, BFF auth                                   |
 | 7   | Sources             | `[ ]`  | Discord + Freshdesk ingestion                                                                                                                           |
 | 8   | Rules               | `[ ]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
 | 9   | Hardening           | `[ ]`  | audit logs → Activity, readiness (db+redis), metrics, rate limits, stalled-run reaper, raw-payload janitor                                              |
@@ -104,14 +104,17 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 6 — Console (design.md)
 
-- [ ] `@repo/design-tokens` (tokens.css, Tailwind preset, tokens.json)
-- [ ] Tailwind + shadcn-style components; dark theme tokens + toggle
-- [ ] landing page redesign (design.md §15)
-- [ ] app shell (sidebar 240px → icon rail → drawer; page header pattern)
-- [ ] Reports list (real `GET /v1/issues`; filters, badges, source chips)
-- [ ] Report detail — signature view (evidence + Jira/PR tabs + actions)
-- [ ] Sources (Discord/Freshdesk "Coming soon"; Scan now) + Settings
-- [ ] BFF-cookie auth (ADR-010) + Playwright smoke
+- [x] `@repo/design-tokens` (tokens.css, Tailwind v4 theme mapping, tokens.json)
+- [x] Tailwind v4 + in-app UI primitives (button/badge/card/input/tabs); dark theme tokens + toggle
+- [x] landing page redesign (design.md §15: 56–72px hero, token-driven, pipeline graphic, one dark primary per section)
+- [x] app shell (240px sidebar, mobile nav, page-header/empty-state/error-banner patterns)
+- [x] Overview — real `GET /v1/overview` (stat cards, needs-review list, source health)
+- [x] Reports list — real `GET /v1/issues` (status filter, provider chips, ticket links, pagination)
+- [x] Report detail — signature view (evidence + Jira/GitHub tabs, run card, ship/retry/ignore/approve actions)
+- [x] Sources — connected cards + Scan now + connect form; Discord/Freshdesk "Coming soon"
+- [x] Settings — workspace, members (invite/roles/remove), API keys (create shown once, revoke)
+- [x] BFF-cookie auth (ADR-010): httpOnly cookies, server-action mutations, middleware refresh-on-expiry
+- [ ] Deferred to console polish: Playwright smoke, command palette, J/K shortcuts, bulk actions, side sheet, PR column in the Reports table
 
 ## Phase 7 — Sources
 
@@ -134,4 +137,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 6**: Console per design.md — `@repo/design-tokens`, Tailwind/shadcn, landing redesign, app shell, Reports list/detail, Sources, Settings, BFF auth (ADR-010).
+Start **Phase 7**: Sources — Discord + Freshdesk ingestion (webhooks / pollers, normalization, correlation) reusing `SignalIngestService`.
