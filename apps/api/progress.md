@@ -18,15 +18,19 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phases
 
-| #   | Phase             | Status | Acceptance criteria                                                                                                                                     |
-| --- | ----------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0   | Contracts         | `[x]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
-| 1   | Data foundation   | `[x]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
-| 2   | Identity & access | `[x]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
-| 3   | Ingestion         | `[x]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
-| 4   | Orchestration     | `[x]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
-| 5   | Delivery          | `[ ]`  | patch/validation persistence; GitHub App PR creation; issue retry/ignore/approve                                                                        |
-| 6   | Hardening         | `[ ]`  | audit logs; readiness (db+redis); metrics; rate limits; Swagger; RCL refresh                                                                            |
+| #   | Phase               | Status | Acceptance criteria                                                                                                                                     |
+| --- | ------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0   | Contracts           | `[x]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
+| 1   | Data foundation     | `[x]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
+| 2   | Identity & access   | `[x]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
+| 3   | Ingestion           | `[x]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
+| 4   | Orchestration       | `[x]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
+| 5   | Delivery            | `[~]`  | runs read API; GitHub client + `PullRequest`; compute/ship split (`READY`); PR status sync; issue retry/ignore/approve                                  |
+| 5.5 | Jira bidirectional  | `[ ]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
+| 6   | Console (design.md) | `[ ]`  | `@repo/design-tokens`, Tailwind/shadcn, landing redesign, shell, Reports list/detail, Sources, Settings, BFF auth                                       |
+| 7   | Sources             | `[ ]`  | Discord + Freshdesk ingestion                                                                                                                           |
+| 8   | Rules               | `[ ]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
+| 9   | Hardening           | `[ ]`  | audit logs → Activity, readiness (db+redis), metrics, rate limits, stalled-run reaper, raw-payload janitor                                              |
 
 ## Phase 0 — Contracts
 
@@ -81,17 +85,50 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 5 — Delivery
 
-- [ ] Patch/FileChange/ValidationRun persistence
-- [ ] GitHub App token exchange + PR creation (`@octokit/auth-app`)
+- [~] runs read API (`GET /v1/runs`, `GET /v1/runs/:id` with plan/patch/validation/PR chain)
+- [ ] compute/ship split: run ends `SUCCEEDED` after validation; issue → `READY`; writes happen only via ship actions
+- [ ] `GitHubClient` seam (stub + `@octokit/auth-app` implementation) + `PullRequest` rows
+- [ ] ship action `POST /v1/issues/:id/pr` (via the `pr` queue, idempotent per run)
+- [ ] PR status sync from inbound GitHub webhooks (`pull_request.closed` → MERGED/CLOSED)
 - [ ] issue actions: retry / ignore / approve
+- [ ] e2e: run → READY → ship → PR row → sync; actions matrix
 
-## Phase 6 — Hardening
+## Phase 5.5 — Jira bidirectional
 
-- [ ] audit log interceptor + `GET /v1/audit-logs`
+- [ ] `Ticket` model + Jira create client (`POST /rest/api/3/issue`) + preview payload
+- [ ] Jira scan (JQL-configured) → shared `IngestSignalService` (extracted from the webhook pipeline)
+- [ ] `GET /v1/overview` (counts, needs-review list, source health)
+
+## Phase 6 — Console (design.md)
+
+- [ ] `@repo/design-tokens` (tokens.css, Tailwind preset, tokens.json)
+- [ ] Tailwind + shadcn-style components; dark theme tokens + toggle
+- [ ] landing page redesign (design.md §15)
+- [ ] app shell (sidebar 240px → icon rail → drawer; page header pattern)
+- [ ] Reports list (real `GET /v1/issues`; filters, badges, source chips)
+- [ ] Report detail — signature view (evidence + Jira/PR tabs + actions)
+- [ ] Sources (Discord/Freshdesk "Coming soon"; Scan now) + Settings
+- [ ] BFF-cookie auth (ADR-010) + Playwright smoke
+
+## Phase 7 — Sources
+
+- [ ] Discord ingestion (bot invite flow, channel scope)
+- [ ] Freshdesk ingestion (domain + API key, group/priority scope)
+
+## Phase 8 — Rules
+
+- [ ] detection rules (what becomes a report) + dry-run
+- [ ] automation rules (ticket/PR creation, confidence floor, daily PR limit, auto-approve)
+- [ ] Rules page per design.md §8.5
+
+## Phase 9 — Hardening
+
+- [ ] audit log interceptor + `GET /v1/audit-logs` → Activity page
 - [ ] extended readiness (db + redis)
 - [ ] metrics + webhook/login rate limits
+- [ ] stalled-run reaper + raw-payload janitor
 - [ ] per-repo RCL + Swagger polish
 
 ## Next action
 
-Start **Phase 5**: delivery (GitHub App PR creation replacing the `OPENING_PR` stub, `PullRequest` rows, issue retry/ignore/approve actions).
+Finish **Phase 5**: compute/ship split, GitHub client + PR records, PR sync, issue actions, runs read API.
