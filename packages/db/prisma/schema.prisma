@@ -37,6 +37,7 @@ enum WebhookStatus {
 enum IssueStatus {
   NEW
   TRIAGED
+  READY
   RUNNING
   PR_OPENED
   RESOLVED

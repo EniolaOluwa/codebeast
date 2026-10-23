@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Prisma } from "@repo/db";
 import {
@@ -32,6 +32,7 @@ import {
   normalizeSentry,
   normalizeSlack,
 } from "./normalizers.ts";
+import { PullRequestSyncService } from "./pull-request-sync.service.ts";
 import {
   header,
   type HeaderBag,
@@ -65,6 +66,7 @@ const BYTES_PER_DAY = 86_400_000;
  */
 @Injectable()
 export class WebhookPipelineService {
+  private readonly logger = new Logger(WebhookPipelineService.name);
   private readonly rawTtlDays: number;
 
   constructor(
@@ -72,6 +74,7 @@ export class WebhookPipelineService {
     private readonly crypto: CryptoService,
     private readonly integrations: IntegrationsService,
     private readonly correlation: CorrelationService,
+    private readonly pullRequestSync: PullRequestSyncService,
     @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
     config: ConfigService,
   ) {
@@ -89,6 +92,15 @@ export class WebhookPipelineService {
     const integration = await this.resolveIntegration(provider, request);
     const secrets = this.integrations.getSecrets(integration);
     this.assertSignature(provider, request, secrets);
+
+    // PR lifecycle events update existing PullRequest rows; they are not
+    // signals and must never create reports of their own.
+    if (
+      provider === "GITHUB" &&
+      header(request.headers, "x-github-event") === "pull_request"
+    ) {
+      return this.handlePullRequestSync(provider, request, integration);
+    }
 
     const signal = this.normalize(provider, request);
     const payloadHash = this.crypto.hash(request.rawBody);
@@ -150,6 +162,57 @@ export class WebhookPipelineService {
       duplicate: outcome.duplicate,
       ...(outcome.issueId ? { issueId: outcome.issueId } : {}),
     };
+  }
+
+  private async handlePullRequestSync(
+    provider: Provider,
+    request: WebhookRequest,
+    integration: IntegrationRow,
+  ): Promise<WebhookAccepted> {
+    const tenantId = integration.tenantId;
+    const payloadHash = this.crypto.hash(request.rawBody!);
+    const externalId =
+      this.deliveryId(provider, request) ?? `sha256:${payloadHash}`;
+
+    const claimed = await this.prisma.withTenant(tenantId, async (tx) => {
+      const claim = await this.claimEvent(tx, {
+        tenantId,
+        provider,
+        externalId,
+        payloadHash,
+        rawBody: request.rawBody!,
+      });
+
+      if (!claim.fresh && claim.event.status === "PROCESSED") {
+        return { duplicate: true, eventId: claim.event.id };
+      }
+
+      return { duplicate: false, eventId: claim.event.id };
+    });
+
+    if (!claimed.duplicate) {
+      const sync = await this.pullRequestSync.sync(tenantId, request.body);
+
+      if (sync.handled && sync.updated) {
+        this.logger.log(
+          `pull request state synced from delivery ${externalId}`,
+        );
+      }
+
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.webhookEvent.update({
+          where: { id: claimed.eventId },
+          data: {
+            tenantId,
+            status: "PROCESSED",
+            processedAt: new Date(),
+            error: null,
+          },
+        });
+      });
+    }
+
+    return { accepted: true, duplicate: claimed.duplicate };
   }
 
   private async enqueue(

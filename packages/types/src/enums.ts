@@ -17,6 +17,8 @@ export type MembershipRole = z.infer<typeof membershipRoleSchema>;
 export const ISSUE_STATUSES = [
   "NEW",
   "TRIAGED",
+  /** Computed and validated: awaiting a human (or rule) to ship it. */
+  "READY",
   "RUNNING",
   "PR_OPENED",
   "RESOLVED",

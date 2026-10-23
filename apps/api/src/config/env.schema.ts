@@ -37,6 +37,10 @@ export const envSchema = z.object({
   REDIS_URL: z.string().min(1).default("redis://localhost:6379"),
   /** Debounce window: signals for one issue coalesce into a single triage. */
   INGEST_COALESCE_MS: z.coerce.number().int().min(0).default(30_000),
+  /** GitHub App (ADR-005). When unset, the stub GitHub client is used. */
+  GITHUB_APP_ID: z.string().optional(),
+  /** Base64-encoded PEM private key (`base64 -i app.pem`). */
+  GITHUB_APP_PRIVATE_KEY_BASE64: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -13,6 +13,7 @@ import {
   QUEUE_NAMES,
   type QueueName,
   type RunStageJob,
+  type ShipPrJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
 import { RunOrchestrator } from "./run-orchestrator.service.ts";
@@ -89,7 +90,7 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
       case "validate":
         return this.orchestrator.handleValidate(data as RunStageJob);
       case "pr":
-        return this.orchestrator.handlePr(data as RunStageJob);
+        return this.orchestrator.handleShipPr(data as ShipPrJob);
     }
   }
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { paginationQuerySchema } from "./api.ts";
 import { runStatusSchema, type RunStatus } from "./enums.ts";
 
 /**
@@ -24,14 +25,17 @@ export const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
     "ESCALATED",
     "CANCELLED",
   ],
+  // A passing validation ends the compute run: shipping (Jira/GitHub writes)
+  // is a separate, human-confirmed step (design.md principle 3).
   VALIDATING: [
-    "OPENING_PR",
+    "SUCCEEDED",
     "VALIDATING",
     "CODING",
     "FAILED",
     "ESCALATED",
     "CANCELLED",
   ],
+  // Kept for wire compatibility; no longer a pipeline stage.
   OPENING_PR: ["SUCCEEDED", "OPENING_PR", "FAILED", "ESCALATED", "CANCELLED"],
   SUCCEEDED: [],
   FAILED: [],
@@ -42,6 +46,12 @@ export const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
 export function canTransition(from: RunStatus, to: RunStatus): boolean {
   return RUN_TRANSITIONS[from].includes(to);
 }
+
+export const runListQuerySchema = paginationQuerySchema.extend({
+  issueId: z.string().min(1).optional(),
+  status: runStatusSchema.optional(),
+});
+export type RunListQuery = z.infer<typeof runListQuerySchema>;
 
 export const planBlueprintSchema = z
   .object({

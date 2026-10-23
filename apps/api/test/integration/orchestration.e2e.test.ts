@@ -14,16 +14,7 @@ import {
   type AgentClient,
 } from "../../src/clients/agent.client.ts";
 import { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
-import {
-  type IngestJob,
-  type PublishOptions,
-  QUEUE_PUBLISHER,
-  type QueueJobPayloads,
-  type QueueName,
-  type QueuePublisher,
-  type RunStageJob,
-  type TriageJob,
-} from "../../src/queues/queue.types.ts";
+import { QUEUE_PUBLISHER } from "../../src/queues/queue.types.ts";
 import { createTestApp } from "../support/app.ts";
 import { getTestDatabase, type TestDatabase } from "../support/database.ts";
 import { dockerAvailable } from "../support/docker.ts";
@@ -32,88 +23,7 @@ import {
   createSignalFixture,
   createTenantFixture,
 } from "../support/factories.ts";
-
-/**
- * In-memory queue: dedupes by jobId (like BullMQ) and lets the test drain
- * jobs deterministically through the real orchestrator. Job-level retries
- * are Redis behavior covered by the publisher test.
- */
-class InMemoryQueue implements QueuePublisher {
-  readonly jobs: {
-    queue: QueueName;
-    payload: Record<string, unknown>;
-    options?: PublishOptions;
-  }[] = [];
-
-  /** Accepted publishes in order, for idempotency-key assertions. */
-  readonly history: { queue: QueueName; jobId?: string }[] = [];
-
-  private readonly seen = new Set<string>();
-
-  async publish<Q extends QueueName>(
-    queue: Q,
-    payload: QueueJobPayloads[Q],
-    options?: PublishOptions,
-  ): Promise<void> {
-    if (options?.jobId) {
-      if (this.seen.has(options.jobId)) {
-        return;
-      }
-      this.seen.add(options.jobId);
-    }
-
-    this.history.push({
-      queue,
-      ...(options?.jobId ? { jobId: options.jobId } : {}),
-    });
-    this.jobs.push({
-      queue,
-      payload: payload as unknown as Record<string, unknown>,
-      options,
-    });
-  }
-
-  reset(): void {
-    this.jobs.length = 0;
-    this.history.length = 0;
-    this.seen.clear();
-  }
-}
-
-async function drain(
-  queue: InMemoryQueue,
-  orchestrator: RunOrchestrator,
-): Promise<void> {
-  while (queue.jobs.length > 0) {
-    const job = queue.jobs.shift()!;
-
-    switch (job.queue) {
-      case "ingest":
-        await orchestrator.handleIngest(job.payload as unknown as IngestJob);
-        break;
-      case "triage":
-        await orchestrator.handleTriage(job.payload as unknown as TriageJob);
-        break;
-      case "plan":
-      case "code":
-      case "validate":
-      case "pr": {
-        const stageJob = job.payload as unknown as RunStageJob;
-
-        if (job.queue === "plan") {
-          await orchestrator.handlePlan(stageJob);
-        } else if (job.queue === "code") {
-          await orchestrator.handleCode(stageJob);
-        } else if (job.queue === "validate") {
-          await orchestrator.handleValidate(stageJob);
-        } else {
-          await orchestrator.handlePr(stageJob);
-        }
-        break;
-      }
-    }
-  }
-}
+import { drainQueue, InMemoryQueue } from "../support/in-memory-queue.ts";
 
 const planOk = () => ({
   ok: true as const,
@@ -223,7 +133,7 @@ describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
       },
     ]);
 
-    await drain(queue, orchestrator());
+    await drainQueue(queue, orchestrator());
 
     const run = await db.admin.run.findFirstOrThrow({
       where: { issueId },
@@ -235,7 +145,11 @@ describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
     const issue = await db.admin.issue.findUniqueOrThrow({
       where: { id: issueId },
     });
-    expect(issue.status).toBe("PR_OPENED");
+    // Compute done: the report awaits a human to ship it.
+    expect(issue.status).toBe("READY");
+    expect(await db.admin.pullRequest.count({ where: { runId: run.id } })).toBe(
+      0,
+    );
 
     const plan = await db.admin.plan.findFirstOrThrow({
       where: { runId: run.id },
@@ -255,20 +169,18 @@ describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
     });
     expect(validationRow.status).toBe("PASSED");
 
-    // One job per stage, in order, ids carrying the attempt number.
+    // One job per compute stage, in order, ids carrying the attempt number.
     expect(queue.history.map((entry) => entry.jobId)).toEqual([
       `triage-${issueId}`,
       `run-${run.id}-plan-1`,
       `run-${run.id}-code-1`,
       `run-${run.id}-validate-1`,
-      `run-${run.id}-pr-1`,
     ]);
     expect(queue.history.map((entry) => entry.queue)).toEqual([
       "triage",
       "plan",
       "code",
       "validate",
-      "pr",
     ]);
 
     expect(agent.plan).toHaveBeenCalledOnce();
@@ -284,7 +196,7 @@ describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
       .mockImplementation(async () => validation("PASSED"));
 
     await orchestrator().handleIngest({ tenantId, issueId });
-    await drain(queue, orchestrator());
+    await drainQueue(queue, orchestrator());
 
     const run = await db.admin.run.findFirstOrThrow({ where: { issueId } });
     expect(run.status).toBe("SUCCEEDED");
@@ -313,7 +225,7 @@ describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
     agent.validate.mockImplementation(async () => validation("FAILED"));
 
     await orchestrator().handleIngest({ tenantId, issueId });
-    await drain(queue, orchestrator());
+    await drainQueue(queue, orchestrator());
 
     const run = await db.admin.run.findFirstOrThrow({ where: { issueId } });
     expect(run.status).toBe("ESCALATED");
@@ -343,7 +255,7 @@ describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
     const { tenantId, issueId } = await seedIssue();
 
     await orchestrator().handleIngest({ tenantId, issueId });
-    await drain(queue, orchestrator());
+    await drainQueue(queue, orchestrator());
 
     const run = await db.admin.run.findFirstOrThrow({ where: { issueId } });
     expect(run.status).toBe("SUCCEEDED");

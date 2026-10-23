@@ -45,6 +45,7 @@ import { QueuesModule } from "./queues/queues.module.ts";
       { path: "v1", module: RepositoriesModule },
       { path: "v1", module: IntegrationsModule },
       { path: "v1", module: IssuesModule },
+      { path: "v1", module: RunsModule },
       { path: "v1", module: WebhooksModule },
     ]),
     PrismaModule,

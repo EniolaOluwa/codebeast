@@ -27,12 +27,10 @@ describe("decideAfterStage — pass path", () => {
     expect(
       decideAfterStage(fresh({ status: "CODING" }), "CODING", "passed"),
     ).toMatchObject({ next: "VALIDATING", attempt: 1 });
+    // A passing validation ends the compute run (compute/ship split).
     expect(
       decideAfterStage(fresh({ status: "VALIDATING" }), "VALIDATING", "passed"),
-    ).toMatchObject({ next: "OPENING_PR", attempt: 1 });
-    expect(
-      decideAfterStage(fresh({ status: "OPENING_PR" }), "OPENING_PR", "passed"),
-    ).toMatchObject({ next: "SUCCEEDED" });
+    ).toMatchObject({ next: "SUCCEEDED", attempt: 1 });
   });
 });
 

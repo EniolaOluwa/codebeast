@@ -104,7 +104,8 @@ describe("run state machine", () => {
   it("only allows transitions declared in the table", () => {
     expect(canTransition("QUEUED", "PLANNING")).toBe(true);
     expect(canTransition("QUEUED", "SUCCEEDED")).toBe(false);
-    expect(canTransition("VALIDATING", "OPENING_PR")).toBe(true);
+    // A passing validation ends the compute run directly (compute/ship split).
+    expect(canTransition("VALIDATING", "SUCCEEDED")).toBe(true);
     // Validator failure returns to the coder (root AGENTS.md §6.3).
     expect(canTransition("VALIDATING", "CODING")).toBe(true);
     expect(canTransition("OPENING_PR", "SUCCEEDED")).toBe(true);

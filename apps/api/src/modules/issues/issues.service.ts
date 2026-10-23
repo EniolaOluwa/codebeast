@@ -1,9 +1,19 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import type { IssueStatus, PaginatedResponse, Provider } from "@repo/types";
 
-import { NotFoundError } from "../../common/errors/errors.ts";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "../../common/errors/errors.ts";
 import { paginated, skipTake } from "../../common/pagination.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
+import {
+  QUEUE_PUBLISHER,
+  type QueuePublisher,
+} from "../../queues/queue.types.ts";
+import { RunOrchestrator } from "../runs/run-orchestrator.service.ts";
+import { TERMINAL_RUN_STATUSES } from "../runs/run-state-machine.ts";
 
 export interface IssueView {
   id: string;
@@ -65,7 +75,11 @@ const REPOSITORY_SELECT = {
 
 @Injectable()
 export class IssuesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly orchestrator: RunOrchestrator,
+    @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
+  ) {}
 
   async list(
     tenantId: string,
@@ -121,5 +135,114 @@ export class IssuesService {
         occurredAt: signal.occurredAt.toISOString(),
       })),
     };
+  }
+
+  /** Re-runs the pipeline for a finished issue (fresh run, attempts reset). */
+  async retry(tenantId: string, issueId: string): Promise<IssueDetailView> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (!["FAILED", "ESCALATED", "IGNORED"].includes(issue.status)) {
+      throw new ValidationError(
+        `Only failed, escalated or ignored reports can be retried (current: ${issue.status})`,
+      );
+    }
+
+    const open = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.run.findFirst({
+        where: {
+          issueId,
+          status: { notIn: [...TERMINAL_RUN_STATUSES] },
+        },
+        select: { id: true },
+      }),
+    );
+
+    if (open) {
+      throw new ConflictError("A run is already in progress for this report");
+    }
+
+    await this.orchestrator.startRun(tenantId, issueId);
+    return this.get(tenantId, issueId);
+  }
+
+  /** Ignores the report and cancels any in-flight run. */
+  async ignore(tenantId: string, issueId: string): Promise<IssueDetailView> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (issue.status === "RESOLVED") {
+      throw new ValidationError("Resolved reports cannot be ignored");
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      // Pending stage jobs become no-ops: the orchestrator guards on status.
+      await tx.run.updateMany({
+        where: { issueId, status: { notIn: [...TERMINAL_RUN_STATUSES] } },
+        data: { status: "CANCELLED", finishedAt: new Date() },
+      });
+
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "IGNORED" },
+      });
+    });
+
+    return this.get(tenantId, issueId);
+  }
+
+  /** Human closes the loop: the fix shipped, mark it resolved. */
+  async approve(tenantId: string, issueId: string): Promise<IssueDetailView> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (issue.status !== "PR_OPENED") {
+      throw new ValidationError(
+        `Only reports with an open pull request can be approved (current: ${issue.status})`,
+      );
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "RESOLVED", resolvedAt: new Date() },
+      });
+    });
+
+    return this.get(tenantId, issueId);
+  }
+
+  /** Ship step: opens the pull request for a READY issue via the pr queue. */
+  async shipPr(tenantId: string, issueId: string): Promise<{ accepted: true }> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (issue.status !== "READY") {
+      throw new ValidationError(
+        `Only ready reports can be shipped (current: ${issue.status})`,
+      );
+    }
+
+    await this.publisher.publish(
+      "pr",
+      { tenantId, issueId },
+      { jobId: `ship-${issueId}-pr` },
+    );
+
+    return { accepted: true };
+  }
+
+  private async loadIssue(
+    tenantId: string,
+    issueId: string,
+  ): Promise<{ id: string; status: IssueStatus }> {
+    const issue = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id: issueId, tenantId },
+        select: { id: true, status: true },
+      }),
+    );
+
+    if (!issue) {
+      throw new NotFoundError("Issue");
+    }
+
+    return issue;
   }
 }

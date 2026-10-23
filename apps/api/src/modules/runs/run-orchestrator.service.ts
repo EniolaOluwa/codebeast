@@ -7,6 +7,10 @@ import {
   type AgentClient,
   type AgentFailure,
 } from "../../clients/agent.client.ts";
+import {
+  GITHUB_CLIENT,
+  type GitHubClient,
+} from "../../clients/github.client.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import {
   type IngestJob,
@@ -14,6 +18,7 @@ import {
   type QueueName,
   type QueuePublisher,
   type RunStageJob,
+  type ShipPrJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
 import { TriageService } from "../triage/triage.service.ts";
@@ -31,7 +36,6 @@ const QUEUE_FOR_STATUS: Partial<Record<RunStatus, QueueName>> = {
   PLANNING: "plan",
   CODING: "code",
   VALIDATING: "validate",
-  OPENING_PR: "pr",
 };
 
 interface RunRow {
@@ -64,6 +68,7 @@ export class RunOrchestrator {
     private readonly triage: TriageService,
     @Inject(AGENT_CLIENT) private readonly agent: AgentClient,
     @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
+    @Inject(GITHUB_CLIENT) private readonly github: GitHubClient,
     config: ConfigService,
   ) {
     this.coalesceMs = config.getOrThrow<number>("INGEST_COALESCE_MS");
@@ -97,16 +102,27 @@ export class RunOrchestrator {
       return;
     }
 
+    await this.startRun(job.tenantId, job.issueId);
+  }
+
+  /**
+   * Creates a run for the issue and publishes its first stage. Used by the
+   * triage handler and by the manual retry action.
+   */
+  async startRun(
+    tenantId: string,
+    issueId: string,
+  ): Promise<{ runId: string }> {
     // Build (and cache) the bounded issue context before any model call.
-    await this.triage.buildIssueContext(job.tenantId, job.issueId);
+    await this.triage.buildIssueContext(tenantId, issueId);
 
     const start = beginRun();
 
-    const run = await this.prisma.withTenant(job.tenantId, async (tx) => {
+    const run = await this.prisma.withTenant(tenantId, async (tx) => {
       const created = await tx.run.create({
         data: {
-          tenantId: job.tenantId,
-          issueId: job.issueId,
+          tenantId,
+          issueId,
           status: "QUEUED",
           attempt: 0,
           maxAttempts: MAX_ATTEMPTS,
@@ -121,14 +137,16 @@ export class RunOrchestrator {
       });
 
       await tx.issue.update({
-        where: { id: job.issueId },
+        where: { id: issueId },
         data: { status: "RUNNING" },
       });
 
       return created;
     });
 
-    await this.publishStage(job.tenantId, run.id, start.status, start.attempt);
+    await this.publishStage(tenantId, run.id, start.status, start.attempt);
+
+    return { runId: run.id };
   }
 
   async handlePlan(job: RunStageJob): Promise<void> {
@@ -327,19 +345,136 @@ export class RunOrchestrator {
     }
   }
 
-  /** Phase 5 replaces this body with the GitHub App client + PullRequest row. */
-  async handlePr(job: RunStageJob): Promise<void> {
-    const run = await this.loadRun(job.tenantId, job.runId);
+  /**
+   * Ship step: opens the pull request for a READY issue. Runs as a queue job
+   * so BullMQ retries/backoff apply to GitHub flakiness. Idempotent per run.
+   */
+  async handleShipPr(job: ShipPrJob): Promise<void> {
+    const issue = await this.prisma.withTenant(job.tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id: job.issueId, tenantId: job.tenantId },
+        include: {
+          repository: {
+            select: { fullName: true, defaultBranch: true },
+          },
+        },
+      }),
+    );
 
-    if (!run || run.status !== "OPENING_PR") {
+    if (!issue) {
+      this.logger.warn(`ship skipped: issue ${job.issueId} not found`);
       return;
     }
 
-    this.logger.log(
-      `run ${run.id} reached OPENING_PR — pull-request creation lands in Phase 5`,
+    if (issue.status === "PR_OPENED" || issue.status === "RESOLVED") {
+      this.logger.log(
+        `ship skipped: issue ${issue.id} is already ${issue.status}`,
+      );
+      return;
+    }
+
+    if (issue.status !== "READY") {
+      this.logger.warn(
+        `ship skipped: issue ${issue.id} is ${issue.status}, expected READY`,
+      );
+      return;
+    }
+
+    if (!issue.repository || !issue.repositoryId) {
+      throw new Error(
+        `Issue ${issue.id} has no repository mapped — cannot open a pull request`,
+      );
+    }
+
+    const run = await this.prisma.withTenant(job.tenantId, (tx) =>
+      tx.run.findFirst({
+        where: { issueId: issue.id, status: "SUCCEEDED" },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      }),
     );
 
-    await this.applyDecision(run, "OPENING_PR", "passed");
+    if (!run) {
+      throw new Error(`No successful run for issue ${issue.id}`);
+    }
+
+    const already = await this.prisma.withTenant(job.tenantId, (tx) =>
+      tx.pullRequest.findUnique({
+        where: { runId: run.id },
+        select: { id: true },
+      }),
+    );
+
+    if (already) {
+      // A previous attempt recorded the PR but crashed before the flip.
+      await this.markShipped(job.tenantId, issue.id);
+      return;
+    }
+
+    const patch = await this.latestPatch(job.tenantId, run.id);
+
+    if (!patch) {
+      throw new Error(`No patch on record for run ${run.id}`);
+    }
+
+    const plan = await this.latestPlan(job.tenantId, run.id);
+    const created = await this.github.createPullRequest({
+      tenantId: job.tenantId,
+      repository: {
+        fullName: issue.repository.fullName,
+        defaultBranch: issue.repository.defaultBranch,
+      },
+      headBranch: `codebeast/fix-${run.id.slice(-8)}`,
+      title: patch.commitMessage,
+      body: [
+        "## Summary",
+        patch.rationale,
+        "",
+        "## Root cause",
+        plan?.rootCause ?? "Not recorded",
+        "",
+        "_Opened ready for review by CodeBeast._",
+      ].join("\n"),
+      files: patch.changes.map((change) => ({
+        path: change.path,
+        content: change.newContent,
+      })),
+    });
+
+    await this.prisma.withTenant(job.tenantId, async (tx) => {
+      await tx.pullRequest.createMany({
+        data: [
+          {
+            tenantId: job.tenantId,
+            runId: run.id,
+            repositoryId: issue.repositoryId!,
+            number: created.number,
+            url: created.url,
+            title: patch.commitMessage,
+            headBranch: created.headBranch,
+            baseBranch: created.baseBranch,
+            status: "OPEN",
+          },
+        ],
+        skipDuplicates: true,
+      });
+
+      await tx.issue.update({
+        where: { id: issue.id },
+        data: { status: "PR_OPENED" },
+      });
+    });
+
+    this.logger.log(`opened ${created.url} for issue ${issue.id}`);
+  }
+
+  private async markShipped(tenantId: string, issueId: string): Promise<void> {
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "PR_OPENED" },
+      });
+    });
   }
 
   private async applyDecision(
@@ -384,10 +519,11 @@ export class RunOrchestrator {
           data: { status: "FAILED" },
         });
       } else if (decision.next === "SUCCEEDED") {
-        // Phase 5 records the PullRequest row before this flip.
+        // Compute done: the issue awaits a human (or rule) to ship it
+        // (design.md principle 3 — writes are a separate, confirmed step).
         await tx.issue.update({
           where: { id: run.issueId },
-          data: { status: "PR_OPENED" },
+          data: { status: "READY" },
         });
       }
     });

@@ -72,21 +72,23 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 
 `apps/api/.env` (from `apps/api/.env.example`) — `DATABASE_URL` is required; the rest have defaults.
 
-| Variable                   | Default                           |
-| -------------------------- | --------------------------------- |
-| `DATABASE_URL`             | (required)                        |
-| `PORT`                     | `3001`                            |
-| `HOST`                     | `0.0.0.0`                         |
-| `NODE_ENV`                 | `development`                     |
-| `LOG_LEVEL`                | `info`                            |
-| `CORS_ORIGIN`              | `*`                               |
-| `JWT_SECRET`               | dev-only (required in production) |
-| `ENCRYPTION_KEY`           | dev-only (required in production) |
-| `AUTH_ACCESS_TTL_SECONDS`  | `900`                             |
-| `AUTH_REFRESH_TTL_SECONDS` | `1209600`                         |
-| `WEBHOOK_RAW_TTL_DAYS`     | `7`                               |
-| `REDIS_URL`                | `redis://localhost:6379`          |
-| `INGEST_COALESCE_MS`       | `30000`                           |
+| Variable                        | Default                           |
+| ------------------------------- | --------------------------------- |
+| `DATABASE_URL`                  | (required)                        |
+| `PORT`                          | `3001`                            |
+| `HOST`                          | `0.0.0.0`                         |
+| `NODE_ENV`                      | `development`                     |
+| `LOG_LEVEL`                     | `info`                            |
+| `CORS_ORIGIN`                   | `*`                               |
+| `JWT_SECRET`                    | dev-only (required in production) |
+| `ENCRYPTION_KEY`                | dev-only (required in production) |
+| `AUTH_ACCESS_TTL_SECONDS`       | `900`                             |
+| `AUTH_REFRESH_TTL_SECONDS`      | `1209600`                         |
+| `WEBHOOK_RAW_TTL_DAYS`          | `7`                               |
+| `REDIS_URL`                     | `redis://localhost:6379`          |
+| `INGEST_COALESCE_MS`            | `30000`                           |
+| `GITHUB_APP_ID`                 | (optional — stub client if unset) |
+| `GITHUB_APP_PRIVATE_KEY_BASE64` | (optional)                        |
 
 `packages/db/.env` (from `packages/db/.env.example`) holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
 

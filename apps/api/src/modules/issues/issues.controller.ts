@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Query } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+} from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 
@@ -50,5 +58,48 @@ export class IssuesController {
     @Param("id") id: string,
   ) {
     return this.triage.buildIssueContext(principal.tenantId, id);
+  }
+
+  @Post(":id/retry")
+  @HttpCode(HttpStatus.OK)
+  @Scopes("issues:write")
+  @ApiOperation({ summary: "Start a fresh run for a finished report" })
+  retry(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.issues.retry(principal.tenantId, id);
+  }
+
+  @Post(":id/ignore")
+  @HttpCode(HttpStatus.OK)
+  @Scopes("issues:write")
+  @ApiOperation({ summary: "Ignore the report and cancel any open run" })
+  ignore(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.ignore(principal.tenantId, id);
+  }
+
+  @Post(":id/approve")
+  @HttpCode(HttpStatus.OK)
+  @Scopes("issues:write")
+  @ApiOperation({ summary: "Confirm the shipped fix and resolve the report" })
+  approve(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.approve(principal.tenantId, id);
+  }
+
+  @Post(":id/pr")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Scopes("issues:write")
+  @ApiOperation({
+    summary: "Ship a ready report: open its pull request",
+  })
+  shipPr(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.shipPr(principal.tenantId, id);
   }
 }

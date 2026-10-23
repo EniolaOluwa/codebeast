@@ -25,7 +25,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 2   | Identity & access   | `[x]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
 | 3   | Ingestion           | `[x]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
 | 4   | Orchestration       | `[x]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
-| 5   | Delivery            | `[~]`  | runs read API; GitHub client + `PullRequest`; compute/ship split (`READY`); PR status sync; issue retry/ignore/approve                                  |
+| 5   | Delivery            | `[x]`  | runs read API; GitHub client + `PullRequest`; compute/ship split (`READY`); PR status sync; issue retry/ignore/approve                                  |
 | 5.5 | Jira bidirectional  | `[ ]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
 | 6   | Console (design.md) | `[ ]`  | `@repo/design-tokens`, Tailwind/shadcn, landing redesign, shell, Reports list/detail, Sources, Settings, BFF auth                                       |
 | 7   | Sources             | `[ ]`  | Discord + Freshdesk ingestion                                                                                                                           |
@@ -85,13 +85,13 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 5 — Delivery
 
-- [~] runs read API (`GET /v1/runs`, `GET /v1/runs/:id` with plan/patch/validation/PR chain)
-- [ ] compute/ship split: run ends `SUCCEEDED` after validation; issue → `READY`; writes happen only via ship actions
-- [ ] `GitHubClient` seam (stub + `@octokit/auth-app` implementation) + `PullRequest` rows
-- [ ] ship action `POST /v1/issues/:id/pr` (via the `pr` queue, idempotent per run)
-- [ ] PR status sync from inbound GitHub webhooks (`pull_request.closed` → MERGED/CLOSED)
-- [ ] issue actions: retry / ignore / approve
-- [ ] e2e: run → READY → ship → PR row → sync; actions matrix
+- [x] runs read API (`GET /v1/runs`, `GET /v1/runs/:id` with plan/patch/validation/PR chain)
+- [x] compute/ship split: run ends `SUCCEEDED` after validation; issue → `READY`; writes happen only via ship actions
+- [x] `GitHubClient` seam — `StubGitHubClient` (default) + `OctokitGitHubClient` (`@octokit/auth-app`, env-gated) + `PullRequest` rows
+- [x] ship action `POST /v1/issues/:id/pr` (via the `pr` queue, idempotent per run, branch `codebeast/fix-<run>`)
+- [x] PR status sync from inbound GitHub webhooks (`pull_request.closed` → MERGED/CLOSED, reopened → OPEN; never ingested as signals)
+- [x] issue actions: retry (fresh run) / ignore (cancels open run) / approve (PR_OPENED → RESOLVED)
+- [x] e2e: run → READY → ship → PR row → sync; actions matrix; runs read API
 
 ## Phase 5.5 — Jira bidirectional
 
@@ -131,4 +131,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Finish **Phase 5**: compute/ship split, GitHub client + PR records, PR sync, issue actions, runs read API.
+Start **Phase 5.5**: Jira bidirectional — `Ticket` model + Jira create client (destination), Jira scan via the shared ingest service (source), `GET /v1/overview`.

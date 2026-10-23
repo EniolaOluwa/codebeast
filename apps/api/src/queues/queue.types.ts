@@ -34,13 +34,19 @@ export interface RunStageJob {
   runId: string;
 }
 
+/** Ship request: open the pull request for a READY issue (compute/ship split). */
+export interface ShipPrJob {
+  tenantId: string;
+  issueId: string;
+}
+
 export interface QueueJobPayloads {
   ingest: IngestJob;
   triage: TriageJob;
   plan: RunStageJob;
   code: RunStageJob;
   validate: RunStageJob;
-  pr: RunStageJob;
+  pr: ShipPrJob;
 }
 
 export interface PublishOptions {

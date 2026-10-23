@@ -26,8 +26,8 @@ export interface TransitionDecision {
 const NEXT_AFTER_PASS: Partial<Record<RunStatus, RunStatus>> = {
   PLANNING: "CODING",
   CODING: "VALIDATING",
-  VALIDATING: "OPENING_PR",
-  OPENING_PR: "SUCCEEDED",
+  // Compute ends here; shipping (Jira/GitHub writes) is a separate action.
+  VALIDATING: "SUCCEEDED",
 };
 
 export interface StageOptions {

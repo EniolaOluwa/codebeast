@@ -8,6 +8,10 @@ import type {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentClient, AgentResult } from "../../clients/agent.client.ts";
+import type {
+  CreatedPullRequest,
+  CreatePullRequestInput,
+} from "../../clients/github.client.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import type {
   PublishOptions,
@@ -93,7 +97,8 @@ function makeHarness() {
     plan: { create: vi.fn(), findFirst: vi.fn() },
     patch: { create: vi.fn(), findFirst: vi.fn() },
     validationRun: { create: vi.fn() },
-    issue: { update: vi.fn() },
+    issue: { update: vi.fn(), findFirst: vi.fn() },
+    pullRequest: { findUnique: vi.fn(), createMany: vi.fn() },
   };
 
   const prisma = {
@@ -125,6 +130,17 @@ function makeHarness() {
     validate: ReturnType<typeof vi.fn>;
   };
 
+  const github = {
+    createPullRequest: vi.fn(
+      async (input: CreatePullRequestInput): Promise<CreatedPullRequest> => ({
+        number: 42,
+        url: "https://github.com/acme/web/pull/42",
+        headBranch: input.headBranch,
+        baseBranch: "main",
+      }),
+    ),
+  };
+
   const publisher = new RecordingPublisher();
 
   const config = {
@@ -137,10 +153,11 @@ function makeHarness() {
     triage,
     agent,
     publisher,
+    github as never,
     config,
   );
 
-  return { orchestrator, prisma, tx, triage, agent, publisher };
+  return { orchestrator, prisma, tx, triage, agent, github, publisher };
 }
 
 describe("RunOrchestrator.handleIngest", () => {
@@ -339,7 +356,7 @@ describe("RunOrchestrator.handleCode", () => {
 });
 
 describe("RunOrchestrator.handleValidate", () => {
-  it("records a passing validation and opens the PR stage", async () => {
+  it("records a passing validation and ends the compute run (issue READY)", async () => {
     const { orchestrator, tx, publisher } = makeHarness();
 
     tx.run.findUnique.mockResolvedValue(runRow({ status: "VALIDATING" }));
@@ -361,10 +378,16 @@ describe("RunOrchestrator.handleValidate", () => {
       attempt: 1,
       status: "PASSED",
     });
-    expect(publisher.jobs.at(-1)!.queue).toBe("pr");
-    expect(publisher.jobs.at(-1)!.options).toEqual({
-      jobId: "run-run_1-pr-1",
+    expect(tx.run.update.mock.calls.at(-1)![0].data).toMatchObject({
+      status: "SUCCEEDED",
+      finishedAt: expect.any(Date),
     });
+    expect(tx.issue.update).toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { status: "READY" },
+    });
+    // Compute is done: nothing is queued; shipping is a separate action.
+    expect(publisher.jobs).toHaveLength(0);
   });
 
   it("returns FAILED validations to the coder with the error attached", async () => {
@@ -448,22 +471,104 @@ describe("RunOrchestrator.handleValidate", () => {
   });
 });
 
-describe("RunOrchestrator.handlePr", () => {
-  it("completes the run and flips the issue to PR_OPENED", async () => {
-    const { orchestrator, tx } = makeHarness();
+describe("RunOrchestrator.handleShipPr", () => {
+  function readyIssue(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "issue_1",
+      status: "READY",
+      repositoryId: "repo_1",
+      repository: { fullName: "acme/web", defaultBranch: "main" },
+      ...overrides,
+    };
+  }
 
-    tx.run.findUnique.mockResolvedValue(runRow({ status: "OPENING_PR" }));
+  it("opens the PR, records it and flips the issue to PR_OPENED", async () => {
+    const { orchestrator, tx, github } = makeHarness();
 
-    await orchestrator.handlePr({ tenantId: "tenant_1", runId: "run_1" });
+    tx.issue.findFirst.mockResolvedValue(readyIssue());
+    tx.run.findFirst.mockResolvedValue({ id: "run_1" });
+    tx.pullRequest.findUnique.mockResolvedValue(null);
+    tx.patch.findFirst.mockResolvedValue({
+      ...patch,
+      fileChanges: [
+        { path: "src/export.ts", oldContent: "", newContent: "// fixed" },
+      ],
+    });
+    tx.plan.findFirst.mockResolvedValue({
+      ...planBlueprint,
+      missingContext: [],
+    });
 
-    const update = tx.run.update.mock.calls.at(-1)![0].data;
-    expect(update).toMatchObject({
-      status: "SUCCEEDED",
-      finishedAt: expect.any(Date),
+    await orchestrator.handleShipPr({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    const createInput = github.createPullRequest.mock.calls[0]![0];
+    expect(createInput).toMatchObject({
+      tenantId: "tenant_1",
+      repository: { fullName: "acme/web", defaultBranch: "main" },
+      headBranch: "codebeast/fix-run_1",
+      title: "fix: export",
+    });
+    expect(createInput.files).toEqual([
+      { path: "src/export.ts", content: "// fixed" },
+    ]);
+
+    expect(tx.pullRequest.createMany.mock.calls[0]![0].data[0]).toMatchObject({
+      runId: "run_1",
+      repositoryId: "repo_1",
+      number: 42,
+      status: "OPEN",
     });
     expect(tx.issue.update).toHaveBeenCalledWith({
       where: { id: "issue_1" },
       data: { status: "PR_OPENED" },
     });
+  });
+
+  it("skips when the issue is not READY", async () => {
+    const { orchestrator, tx, github } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(readyIssue({ status: "RUNNING" }));
+
+    await orchestrator.handleShipPr({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+    expect(tx.issue.update).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent: an existing PR row only re-flips the issue", async () => {
+    const { orchestrator, tx, github } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(readyIssue());
+    tx.run.findFirst.mockResolvedValue({ id: "run_1" });
+    tx.pullRequest.findUnique.mockResolvedValue({ id: "pr_1" });
+
+    await orchestrator.handleShipPr({
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+    });
+
+    expect(github.createPullRequest).not.toHaveBeenCalled();
+    expect(tx.issue.update).toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { status: "PR_OPENED" },
+    });
+  });
+
+  it("refuses to ship without a mapped repository", async () => {
+    const { orchestrator, tx } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(
+      readyIssue({ repositoryId: null, repository: null }),
+    );
+
+    await expect(
+      orchestrator.handleShipPr({ tenantId: "tenant_1", issueId: "issue_1" }),
+    ).rejects.toThrow(/no repository mapped/i);
   });
 });
