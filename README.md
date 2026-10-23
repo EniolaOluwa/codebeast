@@ -15,6 +15,7 @@ every step has a check.
 | Web (Next.js) | http://localhost:3000 | Landing page                     |
 | API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`        |
 | PostgreSQL    | localhost:5434        | Docker container, db `codebeast` |
+| Redis         | localhost:6379        | BullMQ queues (Docker container) |
 
 ## External dependencies
 
@@ -85,6 +86,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 | `AUTH_REFRESH_TTL_SECONDS` | `1209600`                         |
 | `WEBHOOK_RAW_TTL_DAYS`     | `7`                               |
 | `REDIS_URL`                | `redis://localhost:6379`          |
+| `INGEST_COALESCE_MS`       | `30000`                           |
 
 `packages/db/.env` (from `packages/db/.env.example`) holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
 

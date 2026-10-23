@@ -1,5 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import type { PrismaService } from "../../src/prisma/prisma.service.ts";
+import {
+  RLS_CONTEXT,
+  type RlsContext,
+} from "../../src/prisma/prisma.service.ts";
 import { bindPrismaService } from "../support/app.ts";
 import { getTestDatabase, type TestDatabase } from "../support/database.ts";
 import { dockerAvailable } from "../support/docker.ts";
@@ -11,12 +16,6 @@ import {
   createTenantFixture,
   createUserFixture,
 } from "../support/factories.ts";
-
-import {
-  PrismaService,
-  RLS_CONTEXT,
-  type RlsContext,
-} from "../../src/prisma/prisma.service.ts";
 
 /**
  * The Phase 1 acceptance gate: with the non-superuser `codebeast_app` role,

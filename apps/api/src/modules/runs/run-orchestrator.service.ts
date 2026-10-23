@@ -1,0 +1,524 @@
+import { Inject, Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { MAX_ATTEMPTS, type RunStatus } from "@repo/types";
+
+import {
+  AGENT_CLIENT,
+  type AgentClient,
+  type AgentFailure,
+} from "../../clients/agent.client.ts";
+import { PrismaService } from "../../prisma/prisma.service.ts";
+import {
+  type IngestJob,
+  QUEUE_PUBLISHER,
+  type QueueName,
+  type QueuePublisher,
+  type RunStageJob,
+  type TriageJob,
+} from "../../queues/queue.types.ts";
+import { TriageService } from "../triage/triage.service.ts";
+import {
+  beginRun,
+  decideAfterStage,
+  type RunState,
+  type StageOptions,
+  type StageResult,
+  TERMINAL_RUN_STATUSES,
+} from "./run-state-machine.ts";
+
+/** Status -> queue for "the run should execute this stage next". */
+const QUEUE_FOR_STATUS: Partial<Record<RunStatus, QueueName>> = {
+  PLANNING: "plan",
+  CODING: "code",
+  VALIDATING: "validate",
+  OPENING_PR: "pr",
+};
+
+interface RunRow {
+  id: string;
+  tenantId: string;
+  issueId: string;
+  status: RunStatus;
+  attempt: number;
+  replans: number;
+  maxAttempts: number;
+  lastError: string | null;
+}
+
+/**
+ * All run orchestration logic, independent of BullMQ. Workers are thin
+ * adapters over these handlers; tests drive them directly or through an
+ * in-memory queue.
+ *
+ * Every handler is idempotent: it checks that the run is in the stage it is
+ * about to execute and no-ops otherwise, so replayed or duplicated jobs can
+ * never advance a run twice.
+ */
+@Injectable()
+export class RunOrchestrator {
+  private readonly logger = new Logger(RunOrchestrator.name);
+  private readonly coalesceMs: number;
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly triage: TriageService,
+    @Inject(AGENT_CLIENT) private readonly agent: AgentClient,
+    @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
+    config: ConfigService,
+  ) {
+    this.coalesceMs = config.getOrThrow<number>("INGEST_COALESCE_MS");
+  }
+
+  /** Ingestion → coalesced triage: one delayed triage job per issue/window. */
+  async handleIngest(job: IngestJob): Promise<void> {
+    await this.publisher.publish(
+      "triage",
+      { tenantId: job.tenantId, issueId: job.issueId },
+      // BullMQ forbids ':' in custom job ids.
+      { jobId: `triage-${job.issueId}`, delayMs: this.coalesceMs },
+    );
+  }
+
+  async handleTriage(job: TriageJob): Promise<void> {
+    const existing = await this.prisma.withTenant(job.tenantId, async (tx) =>
+      tx.run.findFirst({
+        where: {
+          issueId: job.issueId,
+          status: { notIn: [...TERMINAL_RUN_STATUSES] },
+        },
+        select: { id: true },
+      }),
+    );
+
+    if (existing) {
+      this.logger.log(
+        `triage skipped for issue ${job.issueId}: run ${existing.id} is already open`,
+      );
+      return;
+    }
+
+    // Build (and cache) the bounded issue context before any model call.
+    await this.triage.buildIssueContext(job.tenantId, job.issueId);
+
+    const start = beginRun();
+
+    const run = await this.prisma.withTenant(job.tenantId, async (tx) => {
+      const created = await tx.run.create({
+        data: {
+          tenantId: job.tenantId,
+          issueId: job.issueId,
+          status: "QUEUED",
+          attempt: 0,
+          maxAttempts: MAX_ATTEMPTS,
+          startedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      await tx.run.update({
+        where: { id: created.id },
+        data: { status: start.status, attempt: start.attempt },
+      });
+
+      await tx.issue.update({
+        where: { id: job.issueId },
+        data: { status: "RUNNING" },
+      });
+
+      return created;
+    });
+
+    await this.publishStage(job.tenantId, run.id, start.status, start.attempt);
+  }
+
+  async handlePlan(job: RunStageJob): Promise<void> {
+    const run = await this.loadRun(job.tenantId, job.runId);
+
+    if (!run || run.status !== "PLANNING") {
+      return;
+    }
+
+    const context = await this.triage.buildIssueContext(
+      job.tenantId,
+      run.issueId,
+    );
+    const result = await this.agent.plan({ context });
+
+    if (!result.ok) {
+      await this.applyDecision(
+        run,
+        "PLANNING",
+        this.mapFailure(result.failure),
+        {
+          reason: result.failure.reason,
+        },
+      );
+      return;
+    }
+
+    const plan = result.value;
+    const outcome: StageResult = plan.needsMoreContext
+      ? "needs_replan"
+      : "passed";
+
+    await this.prisma.withTenant(job.tenantId, async (tx) => {
+      await tx.plan.create({
+        data: {
+          tenantId: job.tenantId,
+          runId: run.id,
+          attempt: run.attempt,
+          rootCause: plan.rootCause,
+          filesToInspect: plan.filesToInspect,
+          changeStrategy: plan.changeStrategy,
+          testsToRun: plan.testsToRun,
+          confidence: plan.confidence,
+          needsMoreContext: plan.needsMoreContext,
+          missingContext: plan.missingContext ?? [],
+        },
+      });
+
+      await tx.run.update({
+        where: { id: run.id },
+        data: {
+          rootCause: plan.rootCause,
+          confidence: plan.confidence,
+        },
+      });
+    });
+
+    await this.applyDecision(run, "PLANNING", outcome, {
+      reason: plan.needsMoreContext
+        ? `planner requested more context: ${(plan.missingContext ?? []).join(", ")}`
+        : undefined,
+    });
+  }
+
+  async handleCode(job: RunStageJob): Promise<void> {
+    const run = await this.loadRun(job.tenantId, job.runId);
+
+    if (!run || run.status !== "CODING") {
+      return;
+    }
+
+    const plan = await this.latestPlan(job.tenantId, run.id);
+
+    if (!plan) {
+      await this.applyDecision(run, "CODING", "failed", {
+        reason: "no plan on record for this run",
+      });
+      return;
+    }
+
+    const context = await this.triage.buildIssueContext(
+      job.tenantId,
+      run.issueId,
+    );
+
+    const result = await this.agent.code({
+      context,
+      plan,
+      ...(run.lastError ? { previousError: run.lastError } : {}),
+    });
+
+    if (!result.ok) {
+      await this.applyDecision(run, "CODING", this.mapFailure(result.failure), {
+        reason: result.failure.reason,
+      });
+      return;
+    }
+
+    const patch = result.value;
+
+    await this.prisma.withTenant(job.tenantId, async (tx) => {
+      await tx.patch.create({
+        data: {
+          tenantId: job.tenantId,
+          runId: run.id,
+          attempt: run.attempt,
+          commitMessage: patch.commitMessage,
+          testsToRun: patch.testsToRun,
+          rationale: patch.rationale,
+          fileChanges: {
+            create: patch.changes.map((change) => ({
+              tenantId: job.tenantId,
+              path: change.path,
+              oldContent: change.oldContent,
+              newContent: change.newContent,
+            })),
+          },
+        },
+      });
+    });
+
+    await this.applyDecision(run, "CODING", "passed");
+  }
+
+  async handleValidate(job: RunStageJob): Promise<void> {
+    const run = await this.loadRun(job.tenantId, job.runId);
+
+    if (!run || run.status !== "VALIDATING") {
+      return;
+    }
+
+    const patch = await this.latestPatch(job.tenantId, run.id);
+    const context = await this.triage.buildIssueContext(
+      job.tenantId,
+      run.issueId,
+    );
+
+    const result = patch
+      ? await this.agent.validate({ patch, context })
+      : {
+          ok: false as const,
+          failure: {
+            kind: "retryable" as const,
+            reason: "no patch on record for this run",
+          },
+        };
+
+    if (!result.ok) {
+      // Sandbox/infra failure: retry the validator itself. A "needs_replan"
+      // from validation is treated as a normal test failure back to the coder.
+      const outcome: StageResult =
+        result.failure.kind === "terminal" ? "failed" : "retryable";
+      const options: StageOptions =
+        result.failure.kind === "terminal"
+          ? { reason: result.failure.reason }
+          : { reason: result.failure.reason, retryTo: "VALIDATING" };
+
+      await this.applyDecision(run, "VALIDATING", outcome, options);
+      return;
+    }
+
+    const validation = result.value;
+
+    await this.prisma.withTenant(job.tenantId, async (tx) => {
+      await tx.validationRun.create({
+        data: {
+          tenantId: job.tenantId,
+          runId: run.id,
+          attempt: run.attempt,
+          status: validation.status,
+          testsRun: validation.testsRun,
+          lintPassed: validation.lintPassed,
+          typesPassed: validation.typesPassed,
+          output: validation.output,
+          durationMs: validation.durationMs ?? null,
+        },
+      });
+    });
+
+    switch (validation.status) {
+      case "PASSED":
+        await this.applyDecision(run, "VALIDATING", "passed");
+        return;
+      case "FAILED":
+        // Root AGENTS.md §6.3: back to the coder, same plan, error appended.
+        await this.applyDecision(run, "VALIDATING", "retryable", {
+          retryTo: "CODING",
+          reason: validation.output || "validation failed",
+        });
+        return;
+      case "ERRORED":
+        await this.applyDecision(run, "VALIDATING", "retryable", {
+          reason: validation.output || "validator could not run",
+        });
+        return;
+    }
+  }
+
+  /** Phase 5 replaces this body with the GitHub App client + PullRequest row. */
+  async handlePr(job: RunStageJob): Promise<void> {
+    const run = await this.loadRun(job.tenantId, job.runId);
+
+    if (!run || run.status !== "OPENING_PR") {
+      return;
+    }
+
+    this.logger.log(
+      `run ${run.id} reached OPENING_PR — pull-request creation lands in Phase 5`,
+    );
+
+    await this.applyDecision(run, "OPENING_PR", "passed");
+  }
+
+  private async applyDecision(
+    run: RunRow,
+    stage: RunStatus,
+    result: StageResult,
+    options: StageOptions = {},
+  ): Promise<void> {
+    const decision = decideAfterStage(toRunState(run), stage, result, options);
+
+    this.logger.log(
+      `run ${run.id} ${stage} -> ${decision.next} (attempt ${decision.attempt}${decision.reason ? `, ${decision.reason}` : ""})`,
+    );
+
+    await this.prisma.withTenant(run.tenantId, async (tx) => {
+      await tx.run.update({
+        where: { id: run.id },
+        data: {
+          status: decision.next,
+          attempt: decision.attempt,
+          replans: decision.replans,
+          ...(result === "retryable" || result === "needs_replan"
+            ? { lastError: options.reason ?? null }
+            : {}),
+          ...(result === "passed" ? { lastError: null } : {}),
+          ...(decision.next === "SUCCEEDED" ||
+          decision.next === "FAILED" ||
+          decision.next === "ESCALATED"
+            ? { finishedAt: new Date() }
+            : {}),
+        },
+      });
+
+      if (decision.next === "ESCALATED") {
+        await tx.issue.update({
+          where: { id: run.issueId },
+          data: { status: "ESCALATED" },
+        });
+      } else if (decision.next === "FAILED") {
+        await tx.issue.update({
+          where: { id: run.issueId },
+          data: { status: "FAILED" },
+        });
+      } else if (decision.next === "SUCCEEDED") {
+        // Phase 5 records the PullRequest row before this flip.
+        await tx.issue.update({
+          where: { id: run.issueId },
+          data: { status: "PR_OPENED" },
+        });
+      }
+    });
+
+    await this.publishStage(
+      run.tenantId,
+      run.id,
+      decision.next,
+      decision.attempt,
+    );
+  }
+
+  private mapFailure(failure: AgentFailure): StageResult {
+    switch (failure.kind) {
+      case "terminal":
+        return "failed";
+      case "needs_replan":
+        return "needs_replan";
+      case "retryable":
+        return "retryable";
+    }
+  }
+
+  private async publishStage(
+    tenantId: string,
+    runId: string,
+    status: RunStatus,
+    attempt: number,
+  ): Promise<void> {
+    const queue = QUEUE_FOR_STATUS[status];
+
+    if (!queue) {
+      return;
+    }
+
+    await this.publisher.publish(
+      queue,
+      { tenantId, runId },
+      { jobId: `run-${runId}-${queue}-${attempt}` },
+    );
+  }
+
+  private async loadRun(
+    tenantId: string,
+    runId: string,
+  ): Promise<RunRow | null> {
+    return this.prisma.withTenant(tenantId, async (tx) =>
+      tx.run.findUnique({
+        where: { id: runId },
+        select: {
+          id: true,
+          tenantId: true,
+          issueId: true,
+          status: true,
+          attempt: true,
+          replans: true,
+          maxAttempts: true,
+          lastError: true,
+        },
+      }),
+    );
+  }
+
+  private async latestPlan(tenantId: string, runId: string) {
+    const row = await this.prisma.withTenant(tenantId, async (tx) =>
+      tx.plan.findFirst({
+        where: { runId },
+        orderBy: { attempt: "desc" },
+        select: {
+          rootCause: true,
+          filesToInspect: true,
+          changeStrategy: true,
+          testsToRun: true,
+          confidence: true,
+          needsMoreContext: true,
+          missingContext: true,
+        },
+      }),
+    );
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      rootCause: row.rootCause,
+      filesToInspect: row.filesToInspect,
+      changeStrategy: row.changeStrategy,
+      testsToRun: row.testsToRun,
+      confidence: row.confidence,
+      needsMoreContext: row.needsMoreContext,
+      missingContext: row.missingContext,
+    };
+  }
+
+  private async latestPatch(tenantId: string, runId: string) {
+    const row = await this.prisma.withTenant(tenantId, async (tx) =>
+      tx.patch.findFirst({
+        where: { runId },
+        orderBy: { attempt: "desc" },
+        include: { fileChanges: true },
+      }),
+    );
+
+    if (!row) {
+      return null;
+    }
+
+    return {
+      changes: row.fileChanges.map((change) => ({
+        path: change.path,
+        oldContent: change.oldContent,
+        newContent: change.newContent,
+      })),
+      commitMessage: row.commitMessage,
+      testsToRun: row.testsToRun,
+      rationale: row.rationale,
+    };
+  }
+}
+
+function toRunState(run: {
+  status: RunStatus;
+  attempt: number;
+  maxAttempts: number;
+  replans: number;
+}): RunState {
+  return {
+    status: run.status,
+    attempt: run.attempt,
+    maxAttempts: run.maxAttempts,
+    replans: run.replans,
+  };
+}

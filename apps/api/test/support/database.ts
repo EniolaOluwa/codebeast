@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { createPrismaClient } from "@repo/db";
+import { PostgreSqlContainer } from "@testcontainers/postgresql";
 
 /**
  * One disposable Postgres per test-worker process, migrated with the real

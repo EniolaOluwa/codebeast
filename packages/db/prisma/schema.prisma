@@ -353,6 +353,7 @@ model Patch {
   runId         String
   attempt       Int
   commitMessage String
+  testsToRun    String[]     @default([])
   rationale     String
   status        PatchStatus  @default(PENDING)
   createdAt     DateTime     @default(now())

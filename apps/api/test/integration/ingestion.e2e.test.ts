@@ -4,16 +4,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { SignalEnricher } from "../../src/modules/triage/enrichment.service.ts";
 import { SIGNAL_ENRICHERS } from "../../src/modules/triage/enrichment.service.ts";
 import {
+  githubSignature,
+  sentrySignature,
+  slackSignature,
+} from "../../src/modules/webhooks/signatures.ts";
+import {
   QUEUE_PUBLISHER,
   type QueueJobPayloads,
   type QueueName,
   type QueuePublisher,
 } from "../../src/queues/queue.types.ts";
-import {
-  githubSignature,
-  sentrySignature,
-  slackSignature,
-} from "../../src/modules/webhooks/signatures.ts";
 import { createTestApp } from "../support/app.ts";
 import { getTestDatabase, type TestDatabase } from "../support/database.ts";
 import { dockerAvailable } from "../support/docker.ts";

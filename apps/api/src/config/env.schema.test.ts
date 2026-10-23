@@ -21,6 +21,7 @@ describe("validateEnv", () => {
       AUTH_REFRESH_TTL_SECONDS: 1_209_600,
       WEBHOOK_RAW_TTL_DAYS: 7,
       REDIS_URL: "redis://localhost:6379",
+      INGEST_COALESCE_MS: 30_000,
     });
   });
 

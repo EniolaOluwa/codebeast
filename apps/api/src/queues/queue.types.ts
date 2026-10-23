@@ -23,6 +23,12 @@ export interface IngestJob {
   signalId?: string;
 }
 
+/** Coalesced per issue: one delayed triage job per issue per window. */
+export interface TriageJob {
+  tenantId: string;
+  issueId: string;
+}
+
 export interface RunStageJob {
   tenantId: string;
   runId: string;
@@ -30,7 +36,7 @@ export interface RunStageJob {
 
 export interface QueueJobPayloads {
   ingest: IngestJob;
-  triage: RunStageJob;
+  triage: TriageJob;
   plan: RunStageJob;
   code: RunStageJob;
   validate: RunStageJob;
@@ -38,7 +44,7 @@ export interface QueueJobPayloads {
 }
 
 export interface PublishOptions {
-  /** Idempotency key, e.g. `runId:stage:attempt`. */
+  /** Idempotency key, e.g. `run-<runId>-<stage>-<attempt>` (no `:`, BullMQ). */
   jobId?: string;
   delayMs?: number;
 }

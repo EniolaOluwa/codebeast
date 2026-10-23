@@ -35,6 +35,8 @@ export const envSchema = z.object({
     .default(1_209_600),
   WEBHOOK_RAW_TTL_DAYS: z.coerce.number().int().min(0).default(7),
   REDIS_URL: z.string().min(1).default("redis://localhost:6379"),
+  /** Debounce window: signals for one issue coalesce into a single triage. */
+  INGEST_COALESCE_MS: z.coerce.number().int().min(0).default(30_000),
 });
 
 export type Env = z.infer<typeof envSchema>;

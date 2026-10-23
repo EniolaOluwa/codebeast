@@ -111,6 +111,17 @@ describe("run state machine", () => {
     expect(canTransition("SUCCEEDED", "QUEUED")).toBe(false);
   });
 
+  it("allows same-stage retries wherever a stage can consume an attempt", () => {
+    for (const stage of [
+      "PLANNING",
+      "CODING",
+      "VALIDATING",
+      "OPENING_PR",
+    ] as const) {
+      expect(canTransition(stage, stage)).toBe(true);
+    }
+  });
+
   it("encodes the retry budget from root AGENTS.md §6.4", () => {
     expect(MAX_ATTEMPTS).toBe(3);
     expect(MAX_REPLANS).toBe(1);

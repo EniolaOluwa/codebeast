@@ -14,10 +14,25 @@ export const MAX_REPLANS = 1;
 
 export const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
   QUEUED: ["PLANNING", "FAILED", "CANCELLED"],
+  // Self-loops are retries of the same stage (attempt + 1).
   PLANNING: ["CODING", "PLANNING", "FAILED", "ESCALATED", "CANCELLED"],
-  CODING: ["VALIDATING", "PLANNING", "FAILED", "ESCALATED", "CANCELLED"],
-  VALIDATING: ["OPENING_PR", "CODING", "FAILED", "ESCALATED", "CANCELLED"],
-  OPENING_PR: ["SUCCEEDED", "FAILED", "CANCELLED"],
+  CODING: [
+    "VALIDATING",
+    "CODING",
+    "PLANNING",
+    "FAILED",
+    "ESCALATED",
+    "CANCELLED",
+  ],
+  VALIDATING: [
+    "OPENING_PR",
+    "VALIDATING",
+    "CODING",
+    "FAILED",
+    "ESCALATED",
+    "CANCELLED",
+  ],
+  OPENING_PR: ["SUCCEEDED", "OPENING_PR", "FAILED", "ESCALATED", "CANCELLED"],
   SUCCEEDED: [],
   FAILED: [],
   ESCALATED: [],

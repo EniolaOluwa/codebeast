@@ -24,6 +24,7 @@ import { IntegrationsModule } from "./modules/integrations/integrations.module.t
 import { IssuesModule } from "./modules/issues/issues.module.ts";
 import { MembersModule } from "./modules/members/members.module.ts";
 import { RepositoriesModule } from "./modules/repositories/repositories.module.ts";
+import { RunsModule } from "./modules/runs/runs.module.ts";
 import { WebhooksModule } from "./modules/webhooks/webhooks.module.ts";
 import { PrismaModule } from "./prisma/prisma.module.ts";
 import { QueuesModule } from "./queues/queues.module.ts";
@@ -59,6 +60,7 @@ import { QueuesModule } from "./queues/queues.module.ts";
     IntegrationsModule,
     WebhooksModule,
     IssuesModule,
+    RunsModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

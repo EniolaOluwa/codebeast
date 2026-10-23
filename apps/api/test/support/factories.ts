@@ -111,6 +111,65 @@ export async function createApiKeyFixture(
   });
 }
 
+export async function createIssueFixture(
+  db: DbClient,
+  tenantId: string,
+  overrides: {
+    title?: string;
+    summary?: string;
+    correlationKey?: string;
+    status?:
+      | "NEW"
+      | "TRIAGED"
+      | "RUNNING"
+      | "PR_OPENED"
+      | "RESOLVED"
+      | "IGNORED"
+      | "FAILED"
+      | "ESCALATED";
+  } = {},
+): Promise<{ id: string; correlationKey: string }> {
+  const suffix = uniqueSuffix("issue");
+
+  return db.issue.create({
+    data: {
+      tenantId,
+      title: overrides.title ?? `Issue ${suffix}`,
+      summary: overrides.summary ?? "Fixture issue summary",
+      correlationKey: overrides.correlationKey ?? `test:${suffix}`,
+      status: overrides.status ?? "TRIAGED",
+    },
+    select: { id: true, correlationKey: true },
+  });
+}
+
+export async function createSignalFixture(
+  db: DbClient,
+  input: {
+    tenantId: string;
+    issueId: string;
+    provider?: "SLACK" | "SENTRY" | "GITHUB" | "JIRA";
+    body?: string;
+  },
+): Promise<{ id: string }> {
+  const suffix = uniqueSuffix("signal");
+
+  return db.issueSignal.create({
+    data: {
+      tenantId: input.tenantId,
+      issueId: input.issueId,
+      provider: input.provider ?? "SENTRY",
+      externalId: suffix,
+      eventType: "issue.created",
+      title: `Signal ${suffix}`,
+      body: input.body ?? "at handleExport (src/export.ts:47:11)\nboom",
+      contentHash: `hash-${suffix}`,
+      occurredAt: new Date(),
+    },
+    select: { id: true },
+  });
+}
+
 export async function createRefreshTokenFixture(
   db: DbClient,
   input: { tenantId: string; userId: string; tokenHash?: string },

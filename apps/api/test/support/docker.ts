@@ -11,12 +11,19 @@ import { execFileSync } from "node:child_process";
  * - TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE: the in-VM path Ryuk must mount
  */
 function detectDocker(): boolean {
-  try {
-    execFileSync("docker", ["info"], { stdio: "ignore", timeout: 5_000 });
-    return true;
-  } catch {
-    return false;
+  // Generous timeout: `docker info` can be slow while other containers are
+  // busy (test runs start several), and a false negative silently skips the
+  // integration suites.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      execFileSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 });
+      return true;
+    } catch {
+      // retry once
+    }
   }
+
+  return false;
 }
 
 function resolveDockerHost(): void {

@@ -24,7 +24,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 1   | Data foundation   | `[x]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
 | 2   | Identity & access | `[x]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
 | 3   | Ingestion         | `[x]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
-| 4   | Orchestration     | `[ ]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
+| 4   | Orchestration     | `[x]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
 | 5   | Delivery          | `[ ]`  | patch/validation persistence; GitHub App PR creation; issue retry/ignore/approve                                                                        |
 | 6   | Hardening         | `[ ]`  | audit logs; readiness (db+redis); metrics; rate limits; Swagger; RCL refresh                                                                            |
 
@@ -70,10 +70,14 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 4 — Orchestration
 
-- [ ] Redis/BullMQ module + queues (ingest/triage/plan/code/validate/pr)
-- [ ] `Run` state machine + attempt accounting
-- [ ] `AgentClient` interface + stub
-- [ ] workers with retry/backoff/escalation
+- [x] Redis in dev compose + BullMQ behind `QUEUE_PUBLISHER` (explicit ioredis client; job retries with exponential backoff; id-based dedupe)
+- [x] Run state machine (`run-state-machine.ts`) — pure; 3 attempts / 1 replan / escalate (root §6.4); self-loop retries
+- [x] `AgentClient` interface + deterministic `StubAgentClient`
+- [x] `RunOrchestrator` — idempotent stage handlers (ingest/triage/plan/code/validate/pr) with attempt + replan accounting
+- [x] `WorkersService` — one worker per queue (disabled under test); job ids `run-<id>-<stage>-<attempt>`
+- [x] Coalescing: one delayed triage job per issue per window (`INGEST_COALESCE_MS`, default 30s)
+- [x] Plan/Patch/FileChange/ValidationRun persistence on each stage
+- [x] Live smoke: signed webhook → workers → run SUCCEEDED → issue PR_OPENED
 
 ## Phase 5 — Delivery
 
@@ -90,4 +94,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 4**: orchestration (BullMQ on Redis behind `QUEUE_PUBLISHER`, run state machine, `AgentClient` stub, workers with retry/backoff/escalation).
+Start **Phase 5**: delivery (GitHub App PR creation replacing the `OPENING_PR` stub, `PullRequest` rows, issue retry/ignore/approve actions).
