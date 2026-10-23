@@ -23,7 +23,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 0   | Contracts         | `[x]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
 | 1   | Data foundation   | `[x]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
 | 2   | Identity & access | `[x]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
-| 3   | Ingestion         | `[ ]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
+| 3   | Ingestion         | `[x]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
 | 4   | Orchestration     | `[ ]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
 | 5   | Delivery          | `[ ]`  | patch/validation persistence; GitHub App PR creation; issue retry/ignore/approve                                                                        |
 | 6   | Hardening         | `[ ]`  | audit logs; readiness (db+redis); metrics; rate limits; Swagger; RCL refresh                                                                            |
@@ -60,10 +60,13 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 3 — Ingestion
 
-- [ ] repositories + integrations CRUD
-- [ ] webhook controllers (Slack/Sentry/GitHub/Jira) + signature verification
-- [ ] `WebhookEvent` idempotency + `ingest` queue enqueue
-- [ ] triage/correlation service
+- [x] repositories + integrations CRUD (secrets AES-256-GCM at rest, never returned)
+- [x] webhook controllers (Slack/Sentry/GitHub/Jira) + signature verification (raw-body parser)
+- [x] `WebhookEvent` idempotency (`createMany skipDuplicates`) + `ingest` enqueue via `QueuePublisher` seam
+- [x] triage/correlation service — signals → one issue, 24h window, cross-provider references
+- [x] lazy enrichment + cached `issueContext` (`GET /v1/issues/:id/context`; enrichment once per snapshot)
+- [x] raw payload truncation (64 KB) + TTL bookkeeping (janitor lands in Phase 6)
+- [x] issues read API (`GET /v1/issues`, `GET /v1/issues/:id`)
 
 ## Phase 4 — Orchestration
 
@@ -87,4 +90,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 2**: identity & access (auth module, API keys, members, guards).
+Start **Phase 4**: orchestration (BullMQ on Redis behind `QUEUE_PUBLISHER`, run state machine, `AgentClient` stub, workers with retry/backoff/escalation).

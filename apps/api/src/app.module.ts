@@ -20,8 +20,13 @@ import { validateEnv } from "./config/env.schema.ts";
 import { ApiKeysModule } from "./modules/api-keys/api-keys.module.ts";
 import { AuthModule } from "./modules/auth/auth.module.ts";
 import { HealthModule } from "./modules/health/health.module.ts";
+import { IntegrationsModule } from "./modules/integrations/integrations.module.ts";
+import { IssuesModule } from "./modules/issues/issues.module.ts";
 import { MembersModule } from "./modules/members/members.module.ts";
+import { RepositoriesModule } from "./modules/repositories/repositories.module.ts";
+import { WebhooksModule } from "./modules/webhooks/webhooks.module.ts";
 import { PrismaModule } from "./prisma/prisma.module.ts";
+import { QueuesModule } from "./queues/queues.module.ts";
 
 @Module({
   imports: [
@@ -36,15 +41,24 @@ import { PrismaModule } from "./prisma/prisma.module.ts";
       { path: "v1", module: AuthModule },
       { path: "v1", module: ApiKeysModule },
       { path: "v1", module: MembersModule },
+      { path: "v1", module: RepositoriesModule },
+      { path: "v1", module: IntegrationsModule },
+      { path: "v1", module: IssuesModule },
+      { path: "v1", module: WebhooksModule },
     ]),
     PrismaModule,
     CryptoModule,
     TenantContextModule,
     TokensModule,
+    QueuesModule,
     HealthModule,
     AuthModule,
     ApiKeysModule,
     MembersModule,
+    RepositoriesModule,
+    IntegrationsModule,
+    WebhooksModule,
+    IssuesModule,
   ],
   providers: [
     { provide: APP_PIPE, useClass: ZodValidationPipe },

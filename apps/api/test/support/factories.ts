@@ -1,7 +1,5 @@
 import type { Prisma } from "@repo/db";
 
-import { createPrismaClient } from "@repo/db";
-
 /**
  * Fixture builders shared by every integration suite. They run against a
  * given Prisma client (usually the superuser `admin` client, because fixtures
@@ -129,5 +127,3 @@ export async function createRefreshTokenFixture(
     select: { id: true, tokenHash: true },
   });
 }
-
-export type TestPrismaClient = ReturnType<typeof createPrismaClient>;

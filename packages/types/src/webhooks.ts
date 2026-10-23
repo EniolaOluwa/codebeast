@@ -12,36 +12,36 @@ import { withinBytes } from "./text.ts";
 
 export const slackEnvelopeSchema = z.looseObject({
   type: z.string(),
-  event_id: z.string().optional(),
-  team_id: z.string().optional(),
+  event_id: z.string().nullish(),
+  team_id: z.string().nullish(),
   event: z
     .looseObject({
       type: z.string(),
-      text: z.string().optional(),
-      user: z.string().optional(),
-      channel: z.string().optional(),
-      ts: z.string().optional(),
-      thread_ts: z.string().optional(),
+      text: z.string().nullish(),
+      user: z.string().nullish(),
+      channel: z.string().nullish(),
+      ts: z.string().nullish(),
+      thread_ts: z.string().nullish(),
     })
     .optional(),
 });
 export type SlackEnvelope = z.infer<typeof slackEnvelopeSchema>;
 
 export const sentryEnvelopeSchema = z.looseObject({
-  action: z.string().optional(),
-  installation: z.looseObject({ uuid: z.string().optional() }).optional(),
+  action: z.string().nullish(),
+  installation: z.looseObject({ uuid: z.string().nullish() }).optional(),
   data: z
     .looseObject({
       issue: z
         .looseObject({
-          id: z.string().optional(),
-          title: z.string().optional(),
-          culprit: z.string().optional(),
-          permalink: z.string().optional(),
+          id: z.string().nullish(),
+          title: z.string().nullish(),
+          culprit: z.string().nullish(),
+          permalink: z.string().nullish(),
           project: z
             .looseObject({
-              slug: z.string().optional(),
-              name: z.string().optional(),
+              slug: z.string().nullish(),
+              name: z.string().nullish(),
             })
             .optional(),
         })
@@ -52,30 +52,29 @@ export const sentryEnvelopeSchema = z.looseObject({
 export type SentryEnvelope = z.infer<typeof sentryEnvelopeSchema>;
 
 export const githubEnvelopeSchema = z.looseObject({
-  action: z.string().optional(),
-  installation: z.looseObject({ id: z.number().int().optional() }).optional(),
+  action: z.string().nullish(),
+  installation: z.looseObject({ id: z.number().int().nullish() }).optional(),
   repository: z
     .looseObject({
-      full_name: z.string().optional(),
-      default_branch: z.string().optional(),
+      full_name: z.string().nullish(),
+      default_branch: z.string().nullish(),
     })
     .optional(),
   issue: z
     .looseObject({
-      number: z.number().int().optional(),
-      title: z.string().optional(),
-      body: z.string().nullable().optional(),
-      html_url: z.string().optional(),
-      user: z.looseObject({ login: z.string() }).optional(),
+      number: z.number().int().nullish(),
+      title: z.string().nullish(),
+      body: z.string().nullish(),
+      html_url: z.string().nullish(),
+      user: z.looseObject({ login: z.string().nullish() }).optional(),
     })
     .optional(),
   pull_request: z
     .looseObject({
-      number: z.number().int().optional(),
-      title: z.string().optional(),
-      html_url: z.string().optional(),
-      html_url_branch: z.string().optional(),
-      merged: z.boolean().optional(),
+      number: z.number().int().nullish(),
+      title: z.string().nullish(),
+      html_url: z.string().nullish(),
+      merged: z.boolean().nullish(),
     })
     .optional(),
 });
@@ -83,14 +82,14 @@ export type GithubEnvelope = z.infer<typeof githubEnvelopeSchema>;
 
 export const jiraEnvelopeSchema = z.looseObject({
   webhookEvent: z.string().min(1),
-  timestamp: z.number().optional(),
+  timestamp: z.number().nullish(),
   issue: z
     .looseObject({
-      id: z.string().optional(),
-      key: z.string().optional(),
+      id: z.string().nullish(),
+      key: z.string().nullish(),
       fields: z
         .looseObject({
-          summary: z.string().optional(),
+          summary: z.string().nullish(),
           description: z.unknown().optional(),
         })
         .optional(),

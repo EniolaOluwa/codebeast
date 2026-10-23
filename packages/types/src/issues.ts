@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { providerSchema } from "./enums.ts";
+import { paginationQuerySchema } from "./api.ts";
+import { issueStatusSchema, providerSchema } from "./enums.ts";
 import { withinBytes } from "./text.ts";
 
 /**
@@ -40,6 +41,11 @@ export const issueSignalSchema = z.object({
   occurredAt: z.iso.datetime(),
 });
 export type IssueSignal = z.infer<typeof issueSignalSchema>;
+
+export const issueListQuerySchema = paginationQuerySchema.extend({
+  status: issueStatusSchema.optional(),
+});
+export type IssueListQuery = z.infer<typeof issueListQuerySchema>;
 
 export const issueContextSchema = z.object({
   issueId: z.string().min(1),

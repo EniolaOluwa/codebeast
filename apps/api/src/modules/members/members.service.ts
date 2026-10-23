@@ -12,6 +12,7 @@ import {
   ValidationError,
 } from "../../common/errors/errors.ts";
 import { paginated, skipTake } from "../../common/pagination.ts";
+import { isUniqueViolation } from "../../common/prisma-errors.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 
 export interface MemberView {
@@ -40,15 +41,6 @@ function toMember(row: MemberRow): MemberView {
     role: row.role,
     createdAt: row.createdAt.toISOString(),
   };
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "P2002"
-  );
 }
 
 @Injectable()
