@@ -5,11 +5,22 @@ export const PROVIDER_LABELS: Record<Provider, string> = {
   SENTRY: "Sentry",
   GITHUB: "GitHub",
   JIRA: "Jira",
+  DISCORD: "Discord",
+  FRESHDESK: "Freshdesk",
 };
 
-/** design.md §8.4 launch sources; the rest are "Coming soon". */
-export const SOURCE_TYPES: Provider[] = ["SENTRY", "SLACK", "JIRA", "GITHUB"];
-export const COMING_SOON_SOURCES = ["Discord", "Freshdesk"];
+/** design.md §8.4 launch sources (all connectable since Phase 7). */
+export const SOURCE_TYPES: Provider[] = [
+  "SENTRY",
+  "SLACK",
+  "DISCORD",
+  "FRESHDESK",
+  "JIRA",
+  "GITHUB",
+];
+
+/** Sources that expose a backfill scan (mirrors the API's SCANNABLE_PROVIDERS). */
+export const SCANNABLE_TYPES: Provider[] = ["JIRA", "DISCORD", "FRESHDESK"];
 
 export const ISSUE_STATUS_FILTERS: {
   value: string;

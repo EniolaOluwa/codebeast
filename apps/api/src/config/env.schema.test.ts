@@ -23,6 +23,8 @@ describe("validateEnv", () => {
       REDIS_URL: "redis://localhost:6379",
       INGEST_COALESCE_MS: 30_000,
       JIRA_CLIENT_MODE: "stub",
+      DISCORD_CLIENT_MODE: "stub",
+      FRESHDESK_CLIENT_MODE: "stub",
     });
   });
 

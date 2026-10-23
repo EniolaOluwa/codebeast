@@ -10,6 +10,7 @@ import {
   verifyGithub,
   verifyJira,
   verifySentry,
+  verifySharedSecret,
   verifySlack,
 } from "./signatures.ts";
 
@@ -88,12 +89,17 @@ describe("github signature (sha256= prefix)", () => {
   });
 });
 
-describe("jira shared-secret header", () => {
+describe("shared-secret header (Jira + Freshdesk)", () => {
   it("accepts only an exact match and refuses empty secrets", () => {
     expect(verifyJira("s3cret", "s3cret")).toBe(true);
     expect(verifyJira("s3cret", "s3creT")).toBe(false);
     expect(verifyJira(undefined, "s3cret")).toBe(false);
     expect(verifyJira("", "")).toBe(false);
+  });
+
+  it("verifySharedSecret is the same verifier under the Jira alias", () => {
+    expect(verifySharedSecret("s3cret", "s3cret")).toBe(true);
+    expect(verifyJira).toBe(verifySharedSecret);
   });
 });
 

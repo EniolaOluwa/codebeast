@@ -28,7 +28,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 5   | Delivery            | `[x]`  | runs read API; GitHub client + `PullRequest`; compute/ship split (`READY`); PR status sync; issue retry/ignore/approve                                  |
 | 5.5 | Jira bidirectional  | `[x]`  | Ticket model + Jira create; Jira scan (JQL) via shared ingest service; `GET /v1/overview`                                                               |
 | 6   | Console (design.md) | `[x]`  | `@repo/design-tokens`, Tailwind, landing redesign, shell, Overview/Reports/Report detail, Sources, Settings, BFF auth                                   |
-| 7   | Sources             | `[ ]`  | Discord + Freshdesk ingestion                                                                                                                           |
+| 7   | Sources             | `[x]`  | Discord + Freshdesk ingestion                                                                                                                           |
 | 8   | Rules               | `[ ]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
 | 9   | Hardening           | `[ ]`  | audit logs → Activity, readiness (db+redis), metrics, rate limits, stalled-run reaper, raw-payload janitor                                              |
 
@@ -118,8 +118,14 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 7 — Sources
 
-- [ ] Discord ingestion (bot invite flow, channel scope)
-- [ ] Freshdesk ingestion (domain + API key, group/priority scope)
+- [x] `DISCORD` + `FRESHDESK` providers in the wire contract and Prisma enum (parity-tested)
+- [x] Discord: REST scan client (bot token, channel list), bot-message filtering, scan bookkeeping
+- [x] Freshdesk: signed webhook (`/v1/webhooks/freshdesk/:integrationId`, shared secret) + REST scan client (domain + API key)
+- [x] Shared `SourceScanner` registry + `ScanRunner` (Jira/Discord/Freshdesk); `requestScan` accepts every scannable source
+- [x] Normalizers: Discord messages and Freshdesk conversations (cross-provider references extracted, like Slack)
+- [x] Console: connect forms for both sources, Scan now for all scannable sources, Coming-soon row removed
+- [x] e2e: signed Freshdesk webhook (+replay/bad-secret), Discord scan (+bot skip/dedupe), Freshdesk scan, cross-provider correlation, unscannable rejection
+- [x] ADR-012: signals carry semantic provider ids; deliveries key events
 
 ## Phase 8 — Rules
 
@@ -137,4 +143,4 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 7**: Sources — Discord + Freshdesk ingestion (webhooks / pollers, normalization, correlation) reusing `SignalIngestService`.
+Start **Phase 8**: Rules — detection + automation engine (what becomes a report; when tickets/PRs auto-create), dry-run, PR limits, Rules page per design.md §8.5.

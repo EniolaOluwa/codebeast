@@ -24,6 +24,8 @@ enum Provider {
   SENTRY
   GITHUB
   JIRA
+  DISCORD
+  FRESHDESK
 }
 
 enum WebhookStatus {

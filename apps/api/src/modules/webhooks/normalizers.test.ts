@@ -2,6 +2,9 @@ import { MAX_SIGNAL_BODY_BYTES } from "@repo/types";
 import { describe, expect, it } from "vitest";
 
 import {
+  discordMessageToSignal,
+  freshdeskEnvelopeToTicket,
+  freshdeskTicketToSignal,
   normalizeGithub,
   normalizeJira,
   normalizeSentry,
@@ -197,5 +200,94 @@ describe("normalizeJira", () => {
       correlationKey: "jira:issue:SUP-1",
       occurredAt: "2023-11-14T22:13:20.000Z",
     });
+  });
+});
+
+describe("discordMessageToSignal", () => {
+  const message = {
+    id: "msg-1",
+    content: "checkout is broken on mobile",
+    author: { id: "u1", username: "support-agent", bot: false },
+    timestamp: "2026-10-23T10:00:00.000Z",
+    channelId: "chan-9",
+  };
+
+  it("keys plain messages by guild/channel/message", () => {
+    const signal = discordMessageToSignal(message, { guildId: "guild-1" });
+
+    expect(signal).toMatchObject({
+      provider: "DISCORD",
+      externalId: "msg-1",
+      eventType: "message.create",
+      title: "checkout is broken on mobile",
+      actor: "support-agent",
+      correlationKey: "discord:guild-1:chan-9:msg-1",
+      occurredAt: "2026-10-23T10:00:00.000Z",
+    });
+  });
+
+  it("joins a report when the message links a Sentry issue", () => {
+    const signal = discordMessageToSignal(
+      {
+        ...message,
+        content: "still failing https://sentry.io/issues/42/",
+      },
+      { guildId: "guild-1" },
+    );
+
+    expect(signal.correlationKey).toBe("sentry:issue:42");
+  });
+});
+
+describe("freshdesk tickets", () => {
+  const ticket = {
+    id: 8841,
+    subject: "Export fails on large tables",
+    description_text: "Customer reports a 500 when exporting.",
+    requester: { name: "Dana", email: "dana@customer.example" },
+    created_at: "2026-10-22T08:00:00.000Z",
+  };
+
+  it("accepts both automation payload shapes", () => {
+    expect(freshdeskEnvelopeToTicket({ ticket })).toMatchObject({
+      id: 8841,
+    });
+    expect(
+      freshdeskEnvelopeToTicket({
+        id: 8841,
+        subject: "Flat shape",
+      }),
+    ).toMatchObject({ id: 8841, subject: "Flat shape" });
+    expect(freshdeskEnvelopeToTicket({ nothing: true })).toBeNull();
+  });
+
+  it("normalizes a conversation with a domain URL and requester actor", () => {
+    const signal = freshdeskTicketToSignal(ticket, {
+      domain: "acme.freshdesk.com",
+    });
+
+    expect(signal).toMatchObject({
+      provider: "FRESHDESK",
+      externalId: "8841",
+      eventType: "conversation.create",
+      title: "Export fails on large tables",
+      url: "https://acme.freshdesk.com/a/tickets/8841",
+      actor: "dana@customer.example",
+      correlationKey: "freshdesk:ticket:8841",
+      occurredAt: "2026-10-22T08:00:00.000Z",
+    });
+    expect(signal.body).toContain("Customer reports a 500");
+  });
+
+  it("joins a report when the description quotes a Sentry issue", () => {
+    const signal = freshdeskTicketToSignal(
+      {
+        ...ticket,
+        description_text: "same as https://sentry.io/issues/7/",
+      },
+      { domain: "acme.freshdesk.com" },
+    );
+
+    expect(signal.correlationKey).toBe("sentry:issue:7");
   });
 });

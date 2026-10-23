@@ -19,6 +19,7 @@ import {
   QUEUE_PUBLISHER,
   type QueuePublisher,
 } from "../../queues/queue.types.ts";
+import { SCANNABLE_PROVIDERS } from "../scans/source-scanner.ts";
 
 export interface IntegrationRow {
   id: string;
@@ -205,8 +206,8 @@ export class IntegrationsService {
       throw new NotFoundError("Integration");
     }
 
-    if (integration.type !== "JIRA") {
-      throw new ValidationError("Only Jira sources support scanning");
+    if (!SCANNABLE_PROVIDERS.includes(integration.type)) {
+      throw new ValidationError("This source does not support scanning");
     }
 
     if (!integration.enabled) {

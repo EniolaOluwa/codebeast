@@ -27,6 +27,8 @@ import {
 } from "../integrations/integrations.service.ts";
 import { CorrelationService } from "./correlation.service.ts";
 import {
+  freshdeskEnvelopeToTicket,
+  freshdeskTicketToSignal,
   normalizeGithub,
   normalizeJira,
   normalizeSentry,
@@ -37,8 +39,8 @@ import {
   header,
   type HeaderBag,
   verifyGithub,
-  verifyJira,
   verifySentry,
+  verifySharedSecret,
   verifySlack,
 } from "./signatures.ts";
 
@@ -102,10 +104,13 @@ export class WebhookPipelineService {
       return this.handlePullRequestSync(provider, request, integration);
     }
 
-    const signal = this.normalize(provider, request);
+    const signal = this.normalize(provider, request, integration);
     const payloadHash = this.crypto.hash(request.rawBody);
     const deliveryId = this.deliveryId(provider, request);
-    const externalId = deliveryId ?? `sha256:${payloadHash}`;
+    // The delivery id keys the *event* (replay dedupe). The signal keeps the
+    // normalizer's semantic id (Sentry issue, Jira key, Freshdesk ticket…),
+    // so webhook and scan ingestion of the same item dedupe to one signal.
+    const eventExternalId = deliveryId ?? `sha256:${payloadHash}`;
     const tenantId = integration.tenantId;
 
     const outcome = await this.prisma.withTenant(
@@ -114,7 +119,7 @@ export class WebhookPipelineService {
         const { event, fresh } = await this.claimEvent(tx, {
           tenantId,
           provider,
-          externalId,
+          externalId: eventExternalId,
           payloadHash,
           rawBody: request.rawBody!,
         });
@@ -129,10 +134,11 @@ export class WebhookPipelineService {
         }
 
         // Fresh delivery — or a retry of one that never finished.
-        const correlated = await this.correlation.correlate(tx, tenantId, {
-          ...signal,
-          externalId,
-        });
+        const correlated = await this.correlation.correlate(
+          tx,
+          tenantId,
+          signal,
+        );
 
         await tx.webhookEvent.update({
           where: { id: event.id },
@@ -268,7 +274,10 @@ export class WebhookPipelineService {
           typeof installation?.id === "number" ? String(installation.id) : null,
         );
       }
-      case "JIRA": {
+      case "JIRA":
+      case "FRESHDESK": {
+        // No tenant hint in the payload: the integration id travels in the
+        // webhook path (or an explicit header).
         const id =
           request.integrationId ??
           header(request.headers, "x-codebeast-integration-id");
@@ -281,7 +290,7 @@ export class WebhookPipelineService {
           { [RLS_CONTEXT.INTEGRATION_ID]: id },
           (tx) =>
             tx.integration.findFirst({
-              where: { id, type: "JIRA", enabled: true },
+              where: { id, type: provider, enabled: true },
             }),
         );
 
@@ -291,6 +300,8 @@ export class WebhookPipelineService {
 
         return integration;
       }
+      default:
+        throw new BadRequestError(`${provider} does not send webhooks`);
     }
   }
 
@@ -351,10 +362,13 @@ export class WebhookPipelineService {
           );
         }
         case "JIRA":
-          return verifyJira(
+        case "FRESHDESK":
+          return verifySharedSecret(
             header(request.headers, "x-codebeast-secret"),
             secrets.webhookSecret ?? "",
           );
+        default:
+          return false;
       }
     })();
 
@@ -366,6 +380,7 @@ export class WebhookPipelineService {
   private normalize(
     provider: Provider,
     request: WebhookRequest,
+    integration: IntegrationRow,
   ): NormalizedSignal {
     try {
       switch (provider) {
@@ -380,6 +395,24 @@ export class WebhookPipelineService {
           );
         case "JIRA":
           return normalizeJira(request.body);
+        case "DISCORD":
+          // Discord is scan-only; nothing pushes messages to this endpoint.
+          throw new BadRequestError("Discord does not send webhooks");
+        case "FRESHDESK": {
+          const ticket = freshdeskEnvelopeToTicket(request.body);
+          const domain = (integration.config as { domain?: string } | null)
+            ?.domain;
+
+          if (!ticket || !domain) {
+            throw new BadRequestError(
+              "Malformed FRESHDESK webhook payload (missing ticket or domain)",
+            );
+          }
+
+          return freshdeskTicketToSignal(ticket, { domain });
+        }
+        default:
+          throw new BadRequestError(`Unsupported provider ${provider}`);
       }
     } catch (error) {
       if (error instanceof ZodError) {
@@ -402,6 +435,8 @@ export class WebhookPipelineService {
         return header(request.headers, "x-github-delivery") ?? null;
       case "SENTRY":
       case "JIRA":
+      case "FRESHDESK":
+      case "DISCORD":
         // No delivery id header: byte-identical retries dedupe by payload hash.
         return null;
     }

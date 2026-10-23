@@ -10,12 +10,12 @@ import {
 import { JIRA_CLIENT, type JiraClient } from "../../clients/jira.client.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import type { ScanJob } from "../../queues/queue.types.ts";
+import {
+  recordScan,
+  type SourceScanner,
+  type SourceScanResult,
+} from "../scans/source-scanner.ts";
 import { SignalIngestService } from "../webhooks/signal-ingest.service.ts";
-
-export interface JiraScanResult {
-  scanned: number;
-  imported: number;
-}
 
 /**
  * Jira as a source: pulls existing items (JQL from the integration config)
@@ -23,7 +23,9 @@ export interface JiraScanResult {
  * become reports that run the normal compute pipeline.
  */
 @Injectable()
-export class JiraScanService {
+export class JiraScanService implements SourceScanner {
+  readonly type = "JIRA" as const;
+
   private readonly logger = new Logger(JiraScanService.name);
 
   constructor(
@@ -32,7 +34,7 @@ export class JiraScanService {
     private readonly ingest: SignalIngestService,
   ) {}
 
-  async run(job: ScanJob): Promise<JiraScanResult> {
+  async run(job: ScanJob): Promise<SourceScanResult> {
     const integration = await this.prisma.withTenant(job.tenantId, (tx) =>
       tx.integration.findFirst({
         where: {
@@ -76,19 +78,11 @@ export class JiraScanService {
       (outcome) => outcome.signalAttached,
     ).length;
 
-    const config = (integration.config ?? {}) as Record<string, unknown>;
-
-    await this.prisma.withTenant(job.tenantId, async (tx) => {
-      await tx.integration.update({
-        where: { id: integration.id },
-        data: {
-          config: {
-            ...config,
-            lastScanAt: now,
-            lastScanFound: items.length,
-          },
-        },
-      });
+    await recordScan(this.prisma, {
+      tenantId: job.tenantId,
+      integrationId: integration.id,
+      config: integration.config,
+      found: items.length,
     });
 
     this.logger.log(

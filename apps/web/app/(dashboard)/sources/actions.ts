@@ -38,6 +38,34 @@ export async function connectSourceAction(
         email: String(formData.get("email") ?? "").trim(),
         apiToken: String(formData.get("apiToken") ?? "").trim(),
       };
+    } else if (type === "DISCORD") {
+      const guildId = String(formData.get("guildId") ?? "").trim();
+      const channelIds = String(formData.get("channelIds") ?? "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+      if (channelIds.length === 0) {
+        return { error: "Add at least one channel id." };
+      }
+
+      payload.config = {
+        ...(guildId ? { guildId } : {}),
+        channelIds,
+      };
+      payload.secrets = {
+        botToken: String(formData.get("botToken") ?? "").trim(),
+      };
+    } else if (type === "FRESHDESK") {
+      const webhookSecret = String(formData.get("webhookSecret") ?? "").trim();
+
+      payload.config = {
+        domain: String(formData.get("domain") ?? "").trim(),
+      };
+      payload.secrets = {
+        apiKey: String(formData.get("apiKey") ?? "").trim(),
+        ...(webhookSecret ? { webhookSecret } : {}),
+      };
     } else {
       payload.secrets = {
         signingSecret: String(formData.get("signingSecret") ?? "").trim(),

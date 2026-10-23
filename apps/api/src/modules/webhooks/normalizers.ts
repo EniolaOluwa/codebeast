@@ -1,4 +1,5 @@
 import {
+  freshdeskEnvelopeSchema,
   githubEnvelopeSchema,
   jiraEnvelopeSchema,
   MAX_SIGNAL_BODY_BYTES,
@@ -218,5 +219,109 @@ export function normalizeJira(
       : now.toISOString(),
     correlationKey: `jira:issue:${issue?.key ?? "unknown"}`,
     repositoryHint: null,
+  });
+}
+
+// --- Discord (scanned messages; no inbound webhooks) ------------------------
+
+export interface DiscordMessageInput {
+  id: string;
+  content: string;
+  author: { id: string; username: string; bot?: boolean | null };
+  timestamp: string;
+  channelId: string;
+}
+
+export function discordMessageToSignal(
+  message: DiscordMessageInput,
+  context: { guildId: string | null },
+): NormalizedSignal {
+  const text = message.content ?? "";
+  const reference = referencesFromText(text);
+
+  return normalizedSignalSchema.parse({
+    provider: "DISCORD",
+    externalId: message.id,
+    eventType: "message.create",
+    title: cut(
+      text.split("\n")[0] || "Discord message",
+      MAX_SIGNAL_TITLE_CHARS,
+    ),
+    body: truncateToBytes(text, MAX_SIGNAL_BODY_BYTES),
+    url: null,
+    actor: message.author?.username ?? null,
+    occurredAt: message.timestamp
+      ? new Date(message.timestamp).toISOString()
+      : new Date().toISOString(),
+    correlationKey:
+      reference?.correlationKey ??
+      `discord:${context.guildId ?? "dm"}:${message.channelId}:${message.id}`,
+    repositoryHint: reference?.repositoryHint ?? null,
+  });
+}
+
+// --- Freshdesk (webhook + scan) ---------------------------------------------
+
+export interface FreshdeskTicketInput {
+  id: number | string;
+  subject?: string | null;
+  description_text?: string | null;
+  requester?: { name?: string | null; email?: string | null } | null;
+  created_at?: string | null;
+}
+
+/** Accepts both automation shapes: `{ ticket: {...} }` and top-level fields. */
+export function freshdeskEnvelopeToTicket(
+  payload: unknown,
+): FreshdeskTicketInput | null {
+  const envelope = freshdeskEnvelopeSchema.safeParse(payload);
+
+  if (!envelope.success) {
+    return null;
+  }
+
+  if (envelope.data.ticket?.id !== undefined) {
+    return envelope.data.ticket;
+  }
+
+  const topLevelId = envelope.data.id ?? undefined;
+
+  if (topLevelId !== undefined) {
+    return {
+      id: topLevelId,
+      subject: envelope.data.subject,
+      description_text: envelope.data.description_text,
+    };
+  }
+
+  return null;
+}
+
+export function freshdeskTicketToSignal(
+  ticket: FreshdeskTicketInput,
+  context: { domain: string },
+): NormalizedSignal {
+  const id = String(ticket.id);
+  const title = ticket.subject?.trim() || `Freshdesk conversation #${id}`;
+  const description = ticket.description_text ?? "";
+  // A conversation that quotes a Sentry/GitHub link joins that report.
+  const reference = referencesFromText(description);
+
+  return normalizedSignalSchema.parse({
+    provider: "FRESHDESK",
+    externalId: id,
+    eventType: "conversation.create",
+    title: cut(title, MAX_SIGNAL_TITLE_CHARS),
+    body: truncateToBytes(
+      [title, description].filter(Boolean).join("\n\n"),
+      MAX_SIGNAL_BODY_BYTES,
+    ),
+    url: `https://${context.domain}/a/tickets/${id}`,
+    actor: ticket.requester?.email ?? ticket.requester?.name ?? null,
+    occurredAt: ticket.created_at
+      ? new Date(ticket.created_at).toISOString()
+      : new Date().toISOString(),
+    correlationKey: reference?.correlationKey ?? `freshdesk:ticket:${id}`,
+    repositoryHint: reference?.repositoryHint ?? null,
   });
 }

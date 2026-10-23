@@ -101,6 +101,56 @@ export function ConnectSourceForm({
             </Field>
           </div>
         </>
+      ) : type === "DISCORD" ? (
+        <>
+          <Field
+            label="Bot token"
+            htmlFor="botToken"
+            hint="The bot must already be invited to the server."
+          >
+            <Input id="botToken" name="botToken" type="password" required />
+          </Field>
+          <Field label="Server id (optional)" htmlFor="guildId">
+            <Input id="guildId" name="guildId" placeholder="1234567890" />
+          </Field>
+          <Field
+            label="Channel ids"
+            htmlFor="channelIds"
+            hint="Comma-separated; these channels are scanned for messages."
+          >
+            <Input
+              id="channelIds"
+              name="channelIds"
+              required
+              placeholder="1111111111, 2222222222"
+            />
+          </Field>
+        </>
+      ) : type === "FRESHDESK" ? (
+        <>
+          <Field
+            label="Domain"
+            htmlFor="domain"
+            hint="For example acme.freshdesk.com"
+          >
+            <Input
+              id="domain"
+              name="domain"
+              required
+              placeholder="acme.freshdesk.com"
+            />
+          </Field>
+          <Field label="API key" htmlFor="apiKey">
+            <Input id="apiKey" name="apiKey" type="password" required />
+          </Field>
+          <Field
+            label="Webhook secret (optional)"
+            htmlFor="webhookSecret"
+            hint="Required if Freshdesk pushes conversations to CodeBeast."
+          >
+            <Input id="webhookSecret" name="webhookSecret" type="password" />
+          </Field>
+        </>
       ) : (
         <>
           <Field

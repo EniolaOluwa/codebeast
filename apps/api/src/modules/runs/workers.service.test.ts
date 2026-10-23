@@ -1,7 +1,7 @@
 import type { ConfigService } from "@nestjs/config";
 import { describe, expect, it } from "vitest";
 
-import type { JiraScanService } from "../jira/jira-scan.service.ts";
+import type { ScanRunner } from "../scans/scan-runner.service.ts";
 import type { RunOrchestrator } from "./run-orchestrator.service.ts";
 import { WorkersService } from "./workers.service.ts";
 
@@ -13,7 +13,7 @@ function makeService(env: string): WorkersService {
 
   return new WorkersService(
     {} as unknown as RunOrchestrator,
-    {} as unknown as JiraScanService,
+    {} as unknown as ScanRunner,
     config,
   );
 }

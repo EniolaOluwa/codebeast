@@ -71,4 +71,20 @@ export class WebhooksController {
       toWebhookRequest(request, integrationId),
     );
   }
+
+  @Post("freshdesk/:integrationId")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary:
+      "Freshdesk conversation webhook (shared-secret header X-CodeBeast-Secret)",
+  })
+  freshdesk(
+    @Req() request: FastifyRequest,
+    @Param("integrationId") integrationId: string,
+  ): Promise<WebhookAccepted> {
+    return this.pipeline.handle(
+      "FRESHDESK",
+      toWebhookRequest(request, integrationId),
+    );
+  }
 }

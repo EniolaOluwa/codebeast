@@ -24,8 +24,8 @@ import {
   JIRA_CLIENT,
   type ScannedJiraIssue,
 } from "../../src/clients/jira.client.ts";
-import { JiraScanService } from "../../src/modules/jira/jira-scan.service.ts";
 import { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
+import { ScanRunner } from "../../src/modules/scans/scan-runner.service.ts";
 import { QUEUE_PUBLISHER } from "../../src/queues/queue.types.ts";
 import { codeOk, passedValidation, planOk } from "../support/agent-fixtures.ts";
 import { createTestApp } from "../support/app.ts";
@@ -124,8 +124,8 @@ describe.runIf(dockerAvailable)("jira bidirectional (e2e)", () => {
     return app.get(RunOrchestrator);
   }
 
-  function jiraScan(): JiraScanService {
-    return app.get(JiraScanService);
+  function scanRunner(): ScanRunner {
+    return app.get(ScanRunner);
   }
 
   async function reports() {
@@ -257,7 +257,7 @@ describe.runIf(dockerAvailable)("jira bidirectional (e2e)", () => {
     });
     expect(scan.statusCode).toBe(202);
 
-    await drainQueue(queue, orchestrator(), jiraScan());
+    await drainQueue(queue, orchestrator(), scanRunner());
 
     expect(jira.scan).toHaveBeenCalledOnce();
 
@@ -294,7 +294,7 @@ describe.runIf(dockerAvailable)("jira bidirectional (e2e)", () => {
       url: `/v1/integrations/${integrationId}/scan`,
       headers: report.auth,
     });
-    await drainQueue(queue, orchestrator(), jiraScan());
+    await drainQueue(queue, orchestrator(), scanRunner());
 
     expect(
       await db.admin.issue.count({ where: { tenantId: report.tenantId } }),

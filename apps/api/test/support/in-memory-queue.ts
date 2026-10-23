@@ -1,5 +1,5 @@
-import type { JiraScanService } from "../../src/modules/jira/jira-scan.service.ts";
 import type { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
+import type { ScanRunner } from "../../src/modules/scans/scan-runner.service.ts";
 import type {
   IngestJob,
   PublishOptions,
@@ -63,7 +63,7 @@ export class InMemoryQueue implements QueuePublisher {
 export async function drainQueue(
   queue: InMemoryQueue,
   orchestrator: RunOrchestrator,
-  jiraScan?: JiraScanService,
+  scanRunner?: ScanRunner,
 ): Promise<void> {
   while (queue.jobs.length > 0) {
     const job = queue.jobs.shift()!;
@@ -95,11 +95,11 @@ export async function drainQueue(
         );
         break;
       case "scan": {
-        if (!jiraScan) {
-          throw new Error("drainQueue needs the JiraScanService to run scans");
+        if (!scanRunner) {
+          throw new Error("drainQueue needs the ScanRunner to run scans");
         }
 
-        await jiraScan.run(job.payload as unknown as ScanJob);
+        await scanRunner.run(job.payload as unknown as ScanJob);
         break;
       }
     }

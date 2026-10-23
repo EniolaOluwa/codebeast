@@ -103,3 +103,18 @@ rather than rewrite. Status: `Accepted`, `Superseded`, `Proposed`.
   claim; plain queries see nothing. `WITH CHECK` still requires the acting tenant, so a
   claim can never write across tenants. Dev Postgres (superuser) bypasses RLS —
   isolation tests must use `codebeast_app` (see `errors.md` E-002).
+
+## ADR-012 — Signals carry semantic provider ids; deliveries key events
+
+- **Status:** Accepted
+- **Context:** The webhook pipeline overwrote `IssueSignal.externalId` with the
+  delivery id (or payload hash) while the scan path stored the provider's semantic id
+  (Jira key, Freshdesk ticket id). The two ingestion paths disagreed and could not
+  dedupe the same item ingested both ways (found by the Phase 7 e2e).
+- **Decision:** `WebhookEvent.externalId` keeps the delivery id (event replay dedupe);
+  `IssueSignal.externalId` always carries the normalizer's semantic id. The unique
+  `(tenantId, provider, externalId)` therefore dedupes one item across webhook and scan
+  ingestion.
+- **Consequences:** Repeat deliveries of the same semantic item do not increment
+  `signalCount` (one signal per item per provider); delivery-level history lives on
+  `WebhookEvent`.

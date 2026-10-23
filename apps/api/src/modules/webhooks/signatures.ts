@@ -113,9 +113,9 @@ export function verifyGithub(
   return safeEqual(signature, githubSignature(secret, rawBody));
 }
 
-// --- Jira: shared-secret header (Jira webhooks are not HMAC-signed) ---------
+// --- Shared-secret header (Jira and Freshdesk webhooks are not HMAC-signed) --
 
-export function verifyJira(
+export function verifySharedSecret(
   providedSecret: string | undefined,
   integrationSecret: string,
 ): boolean {
@@ -125,3 +125,5 @@ export function verifyJira(
 
   return safeEqual(providedSecret, integrationSecret);
 }
+
+export const verifyJira = verifySharedSecret;

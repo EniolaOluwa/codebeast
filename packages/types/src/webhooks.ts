@@ -98,6 +98,28 @@ export const jiraEnvelopeSchema = z.looseObject({
 });
 export type JiraEnvelope = z.infer<typeof jiraEnvelopeSchema>;
 
+export const freshdeskEnvelopeSchema = z.looseObject({
+  // Automation webhooks wrap the ticket; some payloads send fields top-level.
+  ticket: z
+    .looseObject({
+      id: z.union([z.number(), z.string()]),
+      subject: z.string().nullish(),
+      description_text: z.string().nullish(),
+      requester: z
+        .looseObject({
+          name: z.string().nullish(),
+          email: z.string().nullish(),
+        })
+        .nullish(),
+      created_at: z.string().nullish(),
+    })
+    .nullish(),
+  id: z.union([z.number(), z.string()]).nullish(),
+  subject: z.string().nullish(),
+  description_text: z.string().nullish(),
+});
+export type FreshdeskEnvelope = z.infer<typeof freshdeskEnvelopeSchema>;
+
 export const normalizedSignalSchema = z.object({
   provider: providerSchema,
   externalId: z.string().min(1),

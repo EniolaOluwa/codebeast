@@ -42,10 +42,12 @@ export const envSchema = z.object({
   /** Base64-encoded PEM private key (`base64 -i app.pem`). */
   GITHUB_APP_PRIVATE_KEY_BASE64: z.string().optional(),
   /**
-   * Jira client. `stub` (default) never touches the network; `api` uses the
-   * REST client with the tenant integration's site URL + credentials.
+   * Source clients. `stub` (default) never touches the network; `api` uses
+   * the REST client with the tenant integration's config + credentials.
    */
   JIRA_CLIENT_MODE: z.enum(["stub", "api"]).default("stub"),
+  DISCORD_CLIENT_MODE: z.enum(["stub", "api"]).default("stub"),
+  FRESHDESK_CLIENT_MODE: z.enum(["stub", "api"]).default("stub"),
 });
 
 export type Env = z.infer<typeof envSchema>;

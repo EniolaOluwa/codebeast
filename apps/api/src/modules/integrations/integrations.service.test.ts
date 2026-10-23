@@ -177,7 +177,24 @@ describe("IntegrationsService.requestScan", () => {
     );
   });
 
-  it("rejects non-Jira sources and disabled integrations", async () => {
+  it("accepts every scannable source", async () => {
+    const { service, tx, publisher } = makeHarness();
+
+    for (const type of ["JIRA", "DISCORD", "FRESHDESK"]) {
+      tx.integration.findFirst.mockResolvedValue({
+        id: "integration_1",
+        type,
+        enabled: true,
+      });
+      await expect(
+        service.requestScan("tenant_1", "integration_1"),
+      ).resolves.toEqual({ accepted: true });
+    }
+
+    expect(publisher.publish).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects unscannable sources and disabled integrations", async () => {
     const { service, tx } = makeHarness();
 
     tx.integration.findFirst.mockResolvedValue({
@@ -187,7 +204,7 @@ describe("IntegrationsService.requestScan", () => {
     });
     await expect(
       service.requestScan("tenant_1", "integration_1"),
-    ).rejects.toThrow(/Only Jira sources/);
+    ).rejects.toThrow(/does not support scanning/);
 
     tx.integration.findFirst.mockResolvedValue({
       id: "integration_1",

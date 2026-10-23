@@ -6,7 +6,14 @@ import { z } from "zod";
  * the two ever drift apart.
  */
 
-export const PROVIDERS = ["SLACK", "SENTRY", "GITHUB", "JIRA"] as const;
+export const PROVIDERS = [
+  "SLACK",
+  "SENTRY",
+  "GITHUB",
+  "JIRA",
+  "DISCORD",
+  "FRESHDESK",
+] as const;
 export const providerSchema = z.enum(PROVIDERS);
 export type Provider = z.infer<typeof providerSchema>;
 

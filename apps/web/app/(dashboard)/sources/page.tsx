@@ -12,8 +12,8 @@ import { apiFetch } from "@/lib/api";
 import type { IntegrationView, Paginated } from "@/lib/api-types";
 import { relativeTime } from "@/lib/format";
 import {
-  COMING_SOON_SOURCES,
   PROVIDER_LABELS,
+  SCANNABLE_TYPES,
   SOURCE_TYPES,
 } from "@/lib/providers";
 
@@ -82,7 +82,7 @@ export default async function SourcesPage({
                         ? `id ${integration.externalId}`
                         : "no external id"}
                     </p>
-                    {integration.type === "JIRA" ? (
+                    {SCANNABLE_TYPES.includes(integration.type) ? (
                       <p>
                         {lastScanAt(integration)
                           ? `last scan ${relativeTime(lastScanAt(integration)!)}`
@@ -90,7 +90,7 @@ export default async function SourcesPage({
                       </p>
                     ) : null}
                   </div>
-                  {integration.type === "JIRA" ? (
+                  {SCANNABLE_TYPES.includes(integration.type) ? (
                     <form action={scanSourceAction}>
                       <input
                         type="hidden"
@@ -130,9 +130,13 @@ export default async function SourcesPage({
                         ? "Watch error issues and turn them into reports."
                         : type === "SLACK"
                           ? "Watch support channels and customer reports."
-                          : type === "JIRA"
-                            ? "Create tickets and import existing items."
-                            : "Open pull requests for validated fixes."}
+                          : type === "DISCORD"
+                            ? "Scan server channels for customer reports."
+                            : type === "FRESHDESK"
+                              ? "Import conversations and receive new ones."
+                              : type === "JIRA"
+                                ? "Create tickets and import existing items."
+                                : "Open pull requests for validated fixes."}
                     </p>
                   </CardBody>
                 </Card>
@@ -148,26 +152,6 @@ export default async function SourcesPage({
           </Card>
         </section>
       ) : null}
-
-      <section className="mt-10">
-        <h2 className="mb-3 text-lg font-semibold tracking-[-0.01em]">
-          Coming soon
-        </h2>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {COMING_SOON_SOURCES.map((name) => (
-            <Card key={name} className="bg-surface-muted">
-              <CardBody className="pt-5">
-                <p className="text-sm font-medium text-foreground-muted">
-                  {name}
-                </p>
-                <p className="text-[13px] text-foreground-subtle">
-                  On the roadmap — not connectable yet.
-                </p>
-              </CardBody>
-            </Card>
-          ))}
-        </div>
-      </section>
     </>
   );
 }

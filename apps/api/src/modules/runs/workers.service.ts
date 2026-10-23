@@ -18,7 +18,7 @@ import {
   type TicketJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
-import { JiraScanService } from "../jira/jira-scan.service.ts";
+import { ScanRunner } from "../scans/scan-runner.service.ts";
 import { RunOrchestrator } from "./run-orchestrator.service.ts";
 
 /**
@@ -35,7 +35,7 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly orchestrator: RunOrchestrator,
-    private readonly jiraScan: JiraScanService,
+    private readonly scanRunner: ScanRunner,
     config: ConfigService,
   ) {
     this.connection = new Redis(config.getOrThrow<string>("REDIS_URL"), {
@@ -98,7 +98,7 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
       case "ticket":
         return this.orchestrator.handleCreateTicket(data as TicketJob);
       case "scan": {
-        await this.jiraScan.run(data as ScanJob);
+        await this.scanRunner.run(data as ScanJob);
         return;
       }
     }
