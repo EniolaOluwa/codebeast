@@ -486,6 +486,19 @@ export class RunOrchestrator {
         skipDuplicates: true,
       });
 
+      // skipDuplicates can swallow a (repositoryId, number) conflict — never
+      // flip the issue without a persisted row.
+      const persisted = await tx.pullRequest.findUnique({
+        where: { runId: run.id },
+        select: { id: true },
+      });
+
+      if (!persisted) {
+        throw new Error(
+          `Pull request #${created.number} conflicts with an existing row; issue left unshipped`,
+        );
+      }
+
       await tx.issue.update({
         where: { id: issue.id },
         data: { status: "PR_OPENED" },
@@ -563,6 +576,19 @@ export class RunOrchestrator {
         ],
         skipDuplicates: true,
       });
+
+      // skipDuplicates can swallow a (tenantId, key) conflict — never flip
+      // the issue without a persisted row.
+      const persisted = await tx.ticket.findUnique({
+        where: { issueId: issue.id },
+        select: { id: true },
+      });
+
+      if (!persisted) {
+        throw new Error(
+          `Ticket ${created.key} conflicts with an existing row; issue left unticketed`,
+        );
+      }
 
       if (issue.status === "READY") {
         await tx.issue.update({

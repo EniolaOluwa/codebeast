@@ -15,11 +15,11 @@ import type {
 @Injectable()
 export class StubJiraClient implements JiraClient {
   private readonly logger = new Logger(StubJiraClient.name);
-  private counter = 200;
 
   async createIssue(_input: CreateJiraIssueInput): Promise<CreatedJiraIssue> {
-    this.counter += 1;
-    const key = `ENG-${this.counter}`;
+    // Randomised: a counter resets with the process and would collide with
+    // existing (tenant, key) rows in long-lived dev databases.
+    const key = `ENG-${1000 + Math.floor(Math.random() * 900_000)}`;
     const url = `https://stub.atlassian.net/browse/${key}`;
 
     this.logger.warn(

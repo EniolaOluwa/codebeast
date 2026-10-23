@@ -104,7 +104,10 @@ function makeHarness() {
       createMany: vi.fn(),
       count: vi.fn().mockResolvedValue(0),
     },
-    ticket: { createMany: vi.fn() },
+    ticket: {
+      createMany: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue({ id: "ticket_1" }),
+    },
   };
 
   const prisma = {
@@ -544,7 +547,10 @@ describe("RunOrchestrator.handleShipPr", () => {
 
     tx.issue.findFirst.mockResolvedValue(readyIssue());
     tx.run.findFirst.mockResolvedValue({ id: "run_1" });
-    tx.pullRequest.findUnique.mockResolvedValue(null);
+    // First call: the idempotency check. Second call: the post-insert check.
+    tx.pullRequest.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "pr_1" });
     tx.patch.findFirst.mockResolvedValue({
       ...patch,
       fileChanges: [
@@ -627,6 +633,26 @@ describe("RunOrchestrator.handleShipPr", () => {
     await expect(
       orchestrator.handleShipPr({ tenantId: "tenant_1", issueId: "issue_1" }),
     ).rejects.toThrow(/no repository mapped/i);
+  });
+
+  it("fails loudly (and leaves the issue READY) on a PR number conflict", async () => {
+    const { orchestrator, tx } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(readyIssue());
+    tx.run.findFirst.mockResolvedValue({ id: "run_1" });
+    tx.pullRequest.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    tx.patch.findFirst.mockResolvedValue({ ...patch, fileChanges: [] });
+
+    await expect(
+      orchestrator.handleShipPr({ tenantId: "tenant_1", issueId: "issue_1" }),
+    ).rejects.toThrow(/conflicts with an existing row/);
+
+    expect(tx.issue.update).not.toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { status: "PR_OPENED" },
+    });
   });
 });
 
@@ -860,5 +886,24 @@ describe("RunOrchestrator.handleCreateTicket", () => {
 
     expect(jira.createIssue).not.toHaveBeenCalled();
     expect(tx.issue.update).not.toHaveBeenCalled();
+  });
+
+  it("fails loudly (and leaves the issue READY) on a ticket key conflict", async () => {
+    const { orchestrator, tx } = makeHarness();
+
+    tx.issue.findFirst.mockResolvedValue(ticketingIssue());
+    tx.ticket.findUnique.mockResolvedValue(null);
+
+    await expect(
+      orchestrator.handleCreateTicket({
+        tenantId: "tenant_1",
+        issueId: "issue_1",
+      }),
+    ).rejects.toThrow(/conflicts with an existing row/);
+
+    expect(tx.issue.update).not.toHaveBeenCalledWith({
+      where: { id: "issue_1" },
+      data: { status: "TICKETED" },
+    });
   });
 });
