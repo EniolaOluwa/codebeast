@@ -16,7 +16,7 @@ FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app ./
 COPY . .
-RUN pnpm --filter @repo/web build
+RUN pnpm --filter @repo/web... build
 
 FROM base AS runner
 WORKDIR /app
