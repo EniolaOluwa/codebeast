@@ -14,13 +14,13 @@ import type {
 @Injectable()
 export class StubGitHubClient implements GitHubClient {
   private readonly logger = new Logger(StubGitHubClient.name);
-  private counter = 100;
 
   async createPullRequest(
     input: CreatePullRequestInput,
   ): Promise<CreatedPullRequest> {
-    this.counter += 1;
-    const number = this.counter;
+    // Randomised: a counter resets with the process and would collide with
+    // existing (repository, number) rows in long-lived dev databases.
+    const number = 1000 + Math.floor(Math.random() * 900_000);
     const url = `https://github.com/${input.repository.fullName}/pull/${number}`;
 
     this.logger.warn(

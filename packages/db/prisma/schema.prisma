@@ -86,6 +86,11 @@ enum ActorType {
   SYSTEM
 }
 
+enum RuleKind {
+  DETECTION
+  AUTOMATION
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
@@ -124,6 +129,7 @@ model Tenant {
   fileChanges        FileChange[]
   validationRuns     ValidationRun[]
   pullRequests       PullRequest[]
+  rules              Rule[]
   auditLogs          AuditLog[]
 }
 
@@ -441,6 +447,21 @@ model PullRequest {
   repository   Repository        @relation(fields: [repositoryId], references: [id])
 
   @@unique([repositoryId, number])
+}
+
+model Rule {
+  id         String   @id @default(cuid())
+  tenantId   String
+  name       String
+  kind       RuleKind
+  enabled    Boolean  @default(false)
+  conditions Json     @default("{}")
+  actions    Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, kind])
 }
 
 model AuditLog {

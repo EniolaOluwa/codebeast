@@ -23,6 +23,7 @@ import {
   type TicketJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
+import { RuleEngine } from "../rules/rule-engine.service.ts";
 import { TriageService } from "../triage/triage.service.ts";
 import {
   beginRun,
@@ -49,6 +50,7 @@ interface RunRow {
   replans: number;
   maxAttempts: number;
   lastError: string | null;
+  confidence: number | null;
 }
 
 /**
@@ -72,6 +74,7 @@ export class RunOrchestrator {
     @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
     @Inject(GITHUB_CLIENT) private readonly github: GitHubClient,
     @Inject(JIRA_CLIENT) private readonly jira: JiraClient,
+    private readonly ruleEngine: RuleEngine,
     config: ConfigService,
   ) {
     this.coalesceMs = config.getOrThrow<number>("INGEST_COALESCE_MS");
@@ -88,6 +91,27 @@ export class RunOrchestrator {
   }
 
   async handleTriage(job: TriageJob): Promise<void> {
+    // Only reports that are actually actionable compute (detection rules and
+    // the ignore action can park a report outside this set).
+    const issue = await this.prisma.withTenant(job.tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id: job.issueId, tenantId: job.tenantId },
+        select: { status: true },
+      }),
+    );
+
+    if (!issue) {
+      this.logger.warn(`triage skipped: issue ${job.issueId} not found`);
+      return;
+    }
+
+    if (!["NEW", "TRIAGED"].includes(issue.status)) {
+      this.logger.log(
+        `triage skipped: issue ${job.issueId} is ${issue.status}`,
+      );
+      return;
+    }
+
     const existing = await this.prisma.withTenant(job.tenantId, async (tx) =>
       tx.run.findFirst({
         where: {
@@ -462,6 +486,19 @@ export class RunOrchestrator {
         skipDuplicates: true,
       });
 
+      // skipDuplicates can swallow a (repositoryId, number) conflict — never
+      // flip the issue without a persisted row.
+      const persisted = await tx.pullRequest.findUnique({
+        where: { runId: run.id },
+        select: { id: true },
+      });
+
+      if (!persisted) {
+        throw new Error(
+          `Pull request #${created.number} conflicts with an existing row; issue left unshipped`,
+        );
+      }
+
       await tx.issue.update({
         where: { id: issue.id },
         data: { status: "PR_OPENED" },
@@ -539,6 +576,19 @@ export class RunOrchestrator {
         ],
         skipDuplicates: true,
       });
+
+      // skipDuplicates can swallow a (tenantId, key) conflict — never flip
+      // the issue without a persisted row.
+      const persisted = await tx.ticket.findUnique({
+        where: { issueId: issue.id },
+        select: { id: true },
+      });
+
+      if (!persisted) {
+        throw new Error(
+          `Ticket ${created.key} conflicts with an existing row; issue left unticketed`,
+        );
+      }
 
       if (issue.status === "READY") {
         await tx.issue.update({
@@ -634,6 +684,98 @@ export class RunOrchestrator {
       decision.next,
       decision.attempt,
     );
+
+    if (decision.next === "SUCCEEDED") {
+      await this.applyAutomation(run.tenantId, run.issueId, run.confidence);
+    }
+  }
+
+  /**
+   * Automation rules (design.md §8.5) run once a report is ready: they may
+   * create the ticket and/or open the PR, subject to the confidence floor and
+   * the daily PR limit baked into the rule.
+   */
+  private async applyAutomation(
+    tenantId: string,
+    issueId: string,
+    confidence: number | null,
+  ): Promise<void> {
+    const issue = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id: issueId, tenantId },
+        select: {
+          id: true,
+          title: true,
+          signalCount: true,
+          repositoryId: true,
+          ticket: { select: { id: true } },
+        },
+      }),
+    );
+
+    if (!issue) {
+      return;
+    }
+
+    const rule = await this.ruleEngine.evaluateAutomation(tenantId, {
+      title: issue.title,
+      signalCount: issue.signalCount,
+    });
+
+    if (!rule) {
+      return;
+    }
+
+    this.logger.log(`automation rule ${rule.ruleId} matched issue ${issueId}`);
+
+    // The rule's target repository applies to the report when it has none.
+    if (rule.actions.repositoryId && !issue.repositoryId) {
+      await this.prisma.withTenant(tenantId, async (tx) => {
+        await tx.issue.update({
+          where: { id: issueId },
+          data: { repositoryId: rule.actions.repositoryId! },
+        });
+      });
+    }
+
+    if (rule.actions.createTicket && !issue.ticket) {
+      await this.publisher.publish(
+        "ticket",
+        { tenantId, issueId },
+        { jobId: `ticket-${issueId}-create` },
+      );
+    }
+
+    if (rule.actions.openPr) {
+      const minConfidence = rule.actions.minConfidence ?? 0.7;
+
+      if ((confidence ?? 0) < minConfidence) {
+        this.logger.log(
+          `pr skipped for issue ${issueId}: confidence ${confidence ?? 0} below ${minConfidence}`,
+        );
+        return;
+      }
+
+      const limit = rule.actions.dailyPrLimit ?? 5;
+      const createdToday = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.pullRequest.count({
+          where: { tenantId, createdAt: { gte: startOfUtcDay() } },
+        }),
+      );
+
+      if (createdToday >= limit) {
+        this.logger.warn(
+          `pr skipped for issue ${issueId}: daily PR limit ${limit} reached`,
+        );
+        return;
+      }
+
+      await this.publisher.publish(
+        "pr",
+        { tenantId, issueId },
+        { jobId: `ship-${issueId}-pr` },
+      );
+    }
   }
 
   private mapFailure(failure: AgentFailure): StageResult {
@@ -682,6 +824,7 @@ export class RunOrchestrator {
           replans: true,
           maxAttempts: true,
           lastError: true,
+          confidence: true,
         },
       }),
     );
@@ -757,6 +900,13 @@ function toRunState(run: {
     maxAttempts: run.maxAttempts,
     replans: run.replans,
   };
+}
+
+function startOfUtcDay(): Date {
+  const now = new Date();
+  return new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  );
 }
 
 const TICKET_DESCRIPTION_BYTES = 30_000;

@@ -4,5 +4,6 @@ export * from "./enums.ts";
 export * from "./ingestion.ts";
 export * from "./issues.ts";
 export * from "./pipeline.ts";
+export * from "./rules.ts";
 export * from "./text.ts";
 export * from "./webhooks.ts";

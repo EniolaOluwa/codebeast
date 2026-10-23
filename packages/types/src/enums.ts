@@ -83,6 +83,10 @@ export const ACTOR_TYPES = ["USER", "API_KEY", "SYSTEM"] as const;
 export const actorTypeSchema = z.enum(ACTOR_TYPES);
 export type ActorType = z.infer<typeof actorTypeSchema>;
 
+export const RULE_KINDS = ["DETECTION", "AUTOMATION"] as const;
+export const ruleKindSchema = z.enum(RULE_KINDS);
+export type RuleKind = z.infer<typeof ruleKindSchema>;
+
 export const API_KEY_SCOPES = [
   "repositories:read",
   "repositories:write",
@@ -94,6 +98,8 @@ export const API_KEY_SCOPES = [
   "runs:write",
   "members:read",
   "overview:read",
+  "rules:read",
+  "rules:write",
   "audit:read",
 ] as const;
 export const apiKeyScopeSchema = z.enum(API_KEY_SCOPES);

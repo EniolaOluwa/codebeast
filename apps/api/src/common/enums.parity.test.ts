@@ -5,6 +5,7 @@ import {
   PatchStatus as PrismaPatchStatus,
   Provider as PrismaProvider,
   PullRequestStatus as PrismaPullRequestStatus,
+  RuleKind as PrismaRuleKind,
   RunStatus as PrismaRunStatus,
   ValidationStatus as PrismaValidationStatus,
   WebhookStatus as PrismaWebhookStatus,
@@ -16,6 +17,7 @@ import {
   PATCH_STATUSES,
   PROVIDERS,
   PULL_REQUEST_STATUSES,
+  RULE_KINDS,
   RUN_STATUSES,
   VALIDATION_STATUSES,
   WEBHOOK_STATUSES,
@@ -37,6 +39,7 @@ const PAIRS: [string, readonly string[], Record<string, string>][] = [
   ["PullRequestStatus", PULL_REQUEST_STATUSES, PrismaPullRequestStatus],
   ["WebhookStatus", WEBHOOK_STATUSES, PrismaWebhookStatus],
   ["ActorType", ACTOR_TYPES, PrismaActorType],
+  ["RuleKind", RULE_KINDS, PrismaRuleKind],
 ];
 
 describe("contract parity: @repo/types enums vs Prisma enums", () => {
