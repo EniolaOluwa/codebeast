@@ -1,0 +1,240 @@
+import type { NestFastifyApplication } from "@nestjs/platform-fastify";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import {
+  AGENT_CLIENT,
+  type AgentClient,
+} from "../../src/clients/agent.client.ts";
+import { RunOrchestrator } from "../../src/modules/runs/run-orchestrator.service.ts";
+import { QUEUE_PUBLISHER } from "../../src/queues/queue.types.ts";
+import { codeOk, planOk, validation } from "../support/agent-fixtures.ts";
+import { createTestApp } from "../support/app.ts";
+import { getTestDatabase, type TestDatabase } from "../support/database.ts";
+import { dockerAvailable } from "../support/docker.ts";
+import {
+  createIssueFixture,
+  createSignalFixture,
+  createTenantFixture,
+} from "../support/factories.ts";
+import { drainQueue, InMemoryQueue } from "../support/in-memory-queue.ts";
+
+/**
+ * Phase 4 acceptance gate: ingest → coalesced triage → plan → code → validate
+ * → pr through the real orchestrator and database, including coder retries,
+ * attempt accounting and escalation.
+ */
+describe.runIf(dockerAvailable)("run orchestration (e2e)", () => {
+  let db: TestDatabase;
+  let app: NestFastifyApplication;
+
+  const queue = new InMemoryQueue();
+  const agent = {
+    plan: vi.fn(),
+    code: vi.fn(),
+    validate: vi.fn(),
+  };
+
+  beforeAll(async () => {
+    db = await getTestDatabase();
+    app = await createTestApp({
+      client: db.app,
+      override: (builder) =>
+        builder
+          .overrideProvider(QUEUE_PUBLISHER)
+          .useValue(queue)
+          .overrideProvider(AGENT_CLIENT)
+          .useValue(agent as unknown as AgentClient),
+    });
+  });
+
+  afterAll(async () => {
+    await app.close();
+    await db.admin.$disconnect();
+    await db.app.$disconnect();
+  });
+
+  beforeEach(() => {
+    queue.reset();
+    agent.plan.mockReset().mockImplementation(async () => planOk());
+    agent.code.mockReset().mockImplementation(async () => codeOk());
+    agent.validate
+      .mockReset()
+      .mockImplementation(async () => validation("PASSED"));
+  });
+
+  async function seedIssue(): Promise<{ tenantId: string; issueId: string }> {
+    const tenant = await createTenantFixture(db.admin);
+    const issue = await createIssueFixture(db.admin, tenant.id);
+    await createSignalFixture(db.admin, {
+      tenantId: tenant.id,
+      issueId: issue.id,
+    });
+
+    return { tenantId: tenant.id, issueId: issue.id };
+  }
+
+  function orchestrator(): RunOrchestrator {
+    return app.get(RunOrchestrator);
+  }
+
+  it("drives a full run: ingest → triage → plan → code → validate → pr", async () => {
+    const { tenantId, issueId } = await seedIssue();
+
+    await orchestrator().handleIngest({ tenantId, issueId });
+
+    // Coalescing window + de-duplication key are set before draining.
+    expect(queue.jobs).toEqual([
+      {
+        queue: "triage",
+        payload: { tenantId, issueId },
+        options: { jobId: `triage-${issueId}`, delayMs: 30_000 },
+      },
+    ]);
+
+    await drainQueue(queue, orchestrator());
+
+    const run = await db.admin.run.findFirstOrThrow({
+      where: { issueId },
+    });
+    expect(run.status).toBe("SUCCEEDED");
+    expect(run.attempt).toBe(1);
+    expect(run.finishedAt).not.toBeNull();
+
+    const issue = await db.admin.issue.findUniqueOrThrow({
+      where: { id: issueId },
+    });
+    // Compute done: the report awaits a human to ship it.
+    expect(issue.status).toBe("READY");
+    expect(await db.admin.pullRequest.count({ where: { runId: run.id } })).toBe(
+      0,
+    );
+
+    const plan = await db.admin.plan.findFirstOrThrow({
+      where: { runId: run.id },
+    });
+    expect(plan.attempt).toBe(1);
+    expect(plan.filesToInspect).toEqual(["src/export.ts"]);
+
+    const patch = await db.admin.patch.findFirstOrThrow({
+      where: { runId: run.id },
+      include: { fileChanges: true },
+    });
+    expect(patch.fileChanges).toHaveLength(1);
+    expect(patch.testsToRun).toEqual(["src/export.test.ts"]);
+
+    const validationRow = await db.admin.validationRun.findFirstOrThrow({
+      where: { runId: run.id },
+    });
+    expect(validationRow.status).toBe("PASSED");
+
+    // One job per compute stage, in order, ids carrying the attempt number.
+    expect(queue.history.map((entry) => entry.jobId)).toEqual([
+      `triage-${issueId}`,
+      `run-${run.id}-plan-1`,
+      `run-${run.id}-code-1`,
+      `run-${run.id}-validate-1`,
+    ]);
+    expect(queue.history.map((entry) => entry.queue)).toEqual([
+      "triage",
+      "plan",
+      "code",
+      "validate",
+    ]);
+
+    expect(agent.plan).toHaveBeenCalledOnce();
+    expect(agent.code).toHaveBeenCalledOnce();
+    expect(agent.validate).toHaveBeenCalledOnce();
+  });
+
+  it("sends validator failures back to the coder with the error attached", async () => {
+    const { tenantId, issueId } = await seedIssue();
+
+    agent.validate
+      .mockImplementationOnce(async () => validation("FAILED"))
+      .mockImplementation(async () => validation("PASSED"));
+
+    await orchestrator().handleIngest({ tenantId, issueId });
+    await drainQueue(queue, orchestrator());
+
+    const run = await db.admin.run.findFirstOrThrow({ where: { issueId } });
+    expect(run.status).toBe("SUCCEEDED");
+    expect(run.attempt).toBe(2);
+    expect(run.lastError).toBeNull();
+
+    const patches = await db.admin.patch.findMany({ where: { runId: run.id } });
+    expect(patches.map((p) => p.attempt)).toEqual([1, 2]);
+
+    const validations = await db.admin.validationRun.findMany({
+      where: { runId: run.id },
+      orderBy: { attempt: "asc" },
+    });
+    expect(validations.map((v) => v.status)).toEqual(["FAILED", "PASSED"]);
+
+    // The coder retry saw the validator output.
+    const retryInput = agent.code.mock.calls[1]![0] as unknown as {
+      previousError?: string;
+    };
+    expect(retryInput.previousError).toContain("FAILED output");
+  });
+
+  it("escalates after three failed attempts and flags the issue", async () => {
+    const { tenantId, issueId } = await seedIssue();
+
+    agent.validate.mockImplementation(async () => validation("FAILED"));
+
+    await orchestrator().handleIngest({ tenantId, issueId });
+    await drainQueue(queue, orchestrator());
+
+    const run = await db.admin.run.findFirstOrThrow({ where: { issueId } });
+    expect(run.status).toBe("ESCALATED");
+    expect(run.attempt).toBe(3);
+
+    const issue = await db.admin.issue.findUniqueOrThrow({
+      where: { id: issueId },
+    });
+    expect(issue.status).toBe("ESCALATED");
+
+    expect(
+      await db.admin.validationRun.count({ where: { runId: run.id } }),
+    ).toBe(3);
+    expect(agent.code).toHaveBeenCalledTimes(3);
+  });
+
+  it("replaying triage never opens a second run (idempotency guard)", async () => {
+    const { tenantId, issueId } = await seedIssue();
+
+    await orchestrator().handleTriage({ tenantId, issueId });
+    await orchestrator().handleTriage({ tenantId, issueId });
+
+    expect(await db.admin.run.count({ where: { issueId } })).toBe(1);
+  });
+
+  it("replaying a completed stage job does not advance the run", async () => {
+    const { tenantId, issueId } = await seedIssue();
+
+    await orchestrator().handleIngest({ tenantId, issueId });
+    await drainQueue(queue, orchestrator());
+
+    const run = await db.admin.run.findFirstOrThrow({ where: { issueId } });
+    expect(run.status).toBe("SUCCEEDED");
+
+    queue.reset();
+
+    // Replayed plan job for a run that already finished: no-op.
+    await orchestrator().handlePlan({ tenantId, runId: run.id });
+
+    expect(queue.jobs).toHaveLength(0);
+    const after = await db.admin.run.findUniqueOrThrow({
+      where: { id: run.id },
+    });
+    expect(after.status).toBe("SUCCEEDED");
+  });
+});

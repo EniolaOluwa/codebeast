@@ -52,13 +52,14 @@ You do **not**:
 These are the repositories you may be asked to fix. Each has its own stack; consult
 the per-repo section before editing.
 
-### `api` — Fastify backend
+### `api` — NestJS backend (Fastify adapter)
 
-- Entrypoint: `src/server.ts`
-- Plugins: `src/plugins/*` (auth, db, jira, github, sentry)
-- Routes: `src/routes/*` (file-based, one file per resource)
+- Entrypoint: `src/main.ts`
+- Modules: `src/modules/*` (feature modules: controllers, services, DTOs)
+- Bootstrap/wiring: `src/app.module.ts`; global exception filter in `src/common/filters/*`
+- Prisma: `src/prisma/*` wraps the shared `@repo/db` client
 - Workers: `src/workers/*` (BullMQ consumers for the agent pipeline)
-- DB: PostgreSQL via `drizzle-orm`; migrations in `drizzle/`
+- DB: PostgreSQL via `prisma` (`packages/db`); migrations in `packages/db/prisma/migrations/`
 - Tests: `vitest`; colocated `*.test.ts`
 
 ### `web` — Next.js control plane
@@ -87,8 +88,8 @@ the per-repo section before editing.
 ### General
 
 - **TypeScript strict mode** everywhere. No `any`; use `unknown` + narrowing.
-- **No default exports** except for Next.js pages/layouts and Fastify plugins.
-- **No `console.log`** — use the injected `logger` (`pino` in `api`/`agent`, `lib/logger` in `web`).
+- **No default exports** except for Next.js pages/layouts.
+- **No `console.log`** — use the injected `logger` (Nest `Logger` in `api`, `pino` in `agent`, `lib/logger` in `web`).
 - **Error handling:** throw typed errors from `shared/errors.ts`; never throw string literals.
 - **Async:** no floating promises. Every `await` either assigned or wrapped in `void` with a comment.
 
@@ -99,11 +100,11 @@ the per-repo section before editing.
 - Functions/variables: `camelCase`. Constants: `SCREAMING_SNAKE_CASE`.
 - Zod schemas: `<Name>Schema`; inferred types: `<Name>`.
 
-### Fastify specifics
+### NestJS (Fastify adapter) specifics
 
-- Register routes via `app.register(routes, { prefix: '/v1/<resource>' })`.
-- Validate request/response with the shared Zod schemas using `fastify-type-provider-zod`.
-- Never access `request.body` without schema validation.
+- Organize code into feature modules under `src/modules/*` and register them in `src/app.module.ts`.
+- Validate request bodies/params with Zod via `nestjs-zod` (`createZodDto` + `ZodValidationPipe`), never a raw `request.body`.
+- Register Fastify plugins (helmet, under-pressure, etc.) with `app.register(plugin)`.
 
 ### Next.js specifics
 
@@ -142,7 +143,7 @@ terraform/**
 package-lock.json
 pnpm-lock.yaml
 yarn.lock
-drizzle/meta/**
+packages/db/prisma/migrations/**
 **/.pem
 **/.key
 .agent/denylist

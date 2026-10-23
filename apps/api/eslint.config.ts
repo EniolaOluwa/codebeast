@@ -6,7 +6,13 @@ export default [
   ...baseConfig,
   ...nodeConfig,
   {
-    files: ["src/server.ts"],
+    files: ["src/**/*.ts"],
+    rules: {
+      "@typescript-eslint/consistent-type-imports": "off",
+    },
+  },
+  {
+    files: ["src/main.ts"],
     rules: {
       "n/no-process-exit": "off",
     },

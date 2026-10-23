@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider   = "prisma-client"
+  output     = "../src/generated/prisma"
+  engineType = "client"
 }
 
 datasource db {
@@ -8,10 +9,452 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Enums — mirrored by zod enums in `@repo/types` (parity tested in apps/api).
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum Provider {
+  SLACK
+  SENTRY
+  GITHUB
+  JIRA
+  DISCORD
+  FRESHDESK
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  DUPLICATE
+  REJECTED
+  FAILED
+}
+
+enum IssueStatus {
+  NEW
+  TRIAGED
+  READY
+  RUNNING
+  TICKETED
+  PR_OPENED
+  RESOLVED
+  IGNORED
+  FAILED
+  ESCALATED
+}
+
+enum RunStatus {
+  QUEUED
+  PLANNING
+  CODING
+  VALIDATING
+  OPENING_PR
+  SUCCEEDED
+  FAILED
+  ESCALATED
+  CANCELLED
+}
+
+enum PatchStatus {
+  PENDING
+  VALIDATED
+  FAILED
+  REJECTED
+}
+
+enum ValidationStatus {
+  PASSED
+  FAILED
+  ERRORED
+}
+
+enum PullRequestStatus {
+  OPEN
+  MERGED
+  CLOSED
+}
+
+enum ActorType {
+  USER
+  API_KEY
+  SYSTEM
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
 model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  passwordHash  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  memberships   Membership[]
+  refreshTokens RefreshToken[]
+}
+
+model Tenant {
+  id                 String              @id @default(cuid())
+  name               String
+  slug               String              @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  memberships        Membership[]
+  apiKeys            ApiKey[]
+  refreshTokens      RefreshToken[]
+  repositories       Repository[]
+  integrations       Integration[]
+  githubInstallation GitHubInstallation?
+  slackWorkspace     SlackWorkspace?
+  webhookEvents      WebhookEvent[]
+  issues             Issue[]
+  tickets            Ticket[]
+  issueSignals       IssueSignal[]
+  runs               Run[]
+  plans              Plan[]
+  patches            Patch[]
+  fileChanges        FileChange[]
+  validationRuns     ValidationRun[]
+  pullRequests       PullRequest[]
+  auditLogs          AuditLog[]
+}
+
+model Membership {
+  id        String         @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      MembershipRole @default(MEMBER)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
+  user      User           @relation(fields: [userId], references: [id])
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  tenantId   String
+  name       String
+  prefix     String    @unique
+  keyHash    String
+  scopes     String[]
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+}
+
+model RefreshToken {
+  id           String    @id @default(cuid())
+  tenantId     String
+  userId       String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Ingestion
+// ---------------------------------------------------------------------------
+
+model Repository {
+  id            String        @id @default(cuid())
+  tenantId      String
+  name          String
+  fullName      String
+  defaultBranch String        @default("main")
+  githubRepoId  Int?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  integrations  Integration[]
+  issues        Issue[]
+  pullRequests  PullRequest[]
+
+  @@unique([tenantId, fullName])
+  @@index([tenantId])
+}
+
+model Integration {
+  id           String      @id @default(cuid())
+  tenantId     String
+  type         Provider
+  name         String
+  externalId   String?
+  config       Json        @default("{}")
+  secrets      String?
+  enabled      Boolean     @default(true)
+  repositoryId String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  tenant       Tenant      @relation(fields: [tenantId], references: [id])
+  repository   Repository? @relation(fields: [repositoryId], references: [id])
+
+  @@unique([tenantId, type, name])
+  @@unique([type, externalId])
+  @@index([tenantId])
+}
+
+model GitHubInstallation {
+  id             String    @id @default(cuid())
+  tenantId       String    @unique
+  installationId Int       @unique
+  accountLogin   String
+  accountType    String
+  suspendedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
+}
+
+model SlackWorkspace {
   id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
+  tenantId  String   @unique
+  teamId    String   @unique
+  teamName  String
+  botUserId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model WebhookEvent {
+  id                  String        @id @default(cuid())
+  tenantId            String?
+  provider            Provider
+  externalId          String
+  status              WebhookStatus @default(RECEIVED)
+  payloadHash         String
+  rawPayload          Json?
+  rawPayloadExpiresAt DateTime?
+  truncated           Boolean       @default(false)
+  error               String?
+  receivedAt          DateTime      @default(now())
+  processedAt         DateTime?
+  tenant              Tenant?       @relation(fields: [tenantId], references: [id])
+
+  @@unique([provider, externalId])
+  @@index([tenantId])
+  @@index([rawPayloadExpiresAt])
+}
+
+model Issue {
+  id             String        @id @default(cuid())
+  tenantId       String
+  repositoryId   String?
+  title          String
+  summary        String
+  status         IssueStatus   @default(NEW)
+  correlationKey String
+  snapshot       Json          @default("{}")
+  signalCount    Int           @default(0)
+  firstSeenAt    DateTime      @default(now())
+  lastSeenAt     DateTime      @default(now())
+  resolvedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  tenant         Tenant        @relation(fields: [tenantId], references: [id])
+  repository     Repository?   @relation(fields: [repositoryId], references: [id])
+  signals        IssueSignal[]
+  runs           Run[]
+  ticket         Ticket?
+
+  @@index([tenantId, status])
+  @@index([tenantId, correlationKey, lastSeenAt])
+}
+
+model Ticket {
+  id         String   @id @default(cuid())
+  tenantId   String
+  issueId    String   @unique
+  key        String
+  url        String
+  projectKey String
+  issueType  String
+  summary    String
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  issue      Issue    @relation(fields: [issueId], references: [id])
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
+}
+
+model IssueSignal {
+  id          String   @id @default(cuid())
+  tenantId    String
+  issueId     String
+  provider    Provider
+  externalId  String
+  eventType   String
+  title       String
+  body        String
+  contentHash String
+  url         String?
+  actor       String?
+  occurredAt  DateTime
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  issue       Issue    @relation(fields: [issueId], references: [id])
+
+  @@unique([tenantId, provider, externalId])
+  @@index([issueId])
+}
+
+// ---------------------------------------------------------------------------
+// Orchestration
+// ---------------------------------------------------------------------------
+
+model Run {
+  id          String    @id @default(cuid())
+  tenantId    String
+  issueId     String
+  status      RunStatus @default(QUEUED)
+  attempt     Int       @default(0)
+  replans     Int       @default(0)
+  maxAttempts Int       @default(3)
+  rootCause   String?
+  confidence  Float?
+  lastError   String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  issue       Issue     @relation(fields: [issueId], references: [id])
+  plans       Plan[]
+  patches     Patch[]
+  validations ValidationRun[]
+  pullRequest PullRequest?
+
+  @@index([tenantId, status])
+  @@index([issueId])
+}
+
+model Plan {
+  id               String   @id @default(cuid())
+  tenantId         String
+  runId            String
+  attempt          Int
+  rootCause        String
+  filesToInspect   String[]
+  changeStrategy   String
+  testsToRun       String[]
+  confidence       Float
+  needsMoreContext Boolean  @default(false)
+  missingContext   String[]
+  raw              Json?
+  createdAt        DateTime @default(now())
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  run              Run      @relation(fields: [runId], references: [id])
+
+  @@unique([runId, attempt])
+  @@index([tenantId])
+}
+
+model Patch {
+  id            String       @id @default(cuid())
+  tenantId      String
+  runId         String
+  attempt       Int
+  commitMessage String
+  testsToRun    String[]     @default([])
+  rationale     String
+  status        PatchStatus  @default(PENDING)
+  createdAt     DateTime     @default(now())
+  tenant        Tenant       @relation(fields: [tenantId], references: [id])
+  run           Run          @relation(fields: [runId], references: [id])
+  fileChanges   FileChange[]
+
+  @@unique([runId, attempt])
+  @@index([tenantId])
+}
+
+model FileChange {
+  id         String   @id @default(cuid())
+  tenantId   String
+  patchId    String
+  path       String
+  oldContent String
+  newContent String
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  patch      Patch    @relation(fields: [patchId], references: [id])
+
+  @@index([patchId])
+  @@index([tenantId])
+}
+
+model ValidationRun {
+  id           String           @id @default(cuid())
+  tenantId     String
+  runId        String
+  attempt      Int
+  sandboxRunId String?
+  status       ValidationStatus
+  testsRun     String[]
+  lintPassed   Boolean?
+  typesPassed  Boolean?
+  output       String?
+  durationMs   Int?
+  createdAt    DateTime         @default(now())
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  run          Run              @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([tenantId])
+}
+
+model PullRequest {
+  id           String            @id @default(cuid())
+  tenantId     String
+  runId        String            @unique
+  repositoryId String
+  number       Int
+  url          String
+  title        String
+  headBranch   String
+  baseBranch   String
+  status       PullRequestStatus @default(OPEN)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  run          Run               @relation(fields: [runId], references: [id])
+  repository   Repository        @relation(fields: [repositoryId], references: [id])
+
+  @@unique([repositoryId, number])
+}
+
+model AuditLog {
+  id         String    @id @default(cuid())
+  tenantId   String
+  actorType  ActorType
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String?
+  metadata   Json?
+  ip         String?
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, createdAt])
 }
