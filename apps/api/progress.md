@@ -22,7 +22,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | --- | ----------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0   | Contracts         | `[x]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
 | 1   | Data foundation   | `[x]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
-| 2   | Identity & access | `[ ]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
+| 2   | Identity & access | `[x]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
 | 3   | Ingestion         | `[ ]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
 | 4   | Orchestration     | `[ ]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
 | 5   | Delivery          | `[ ]`  | patch/validation persistence; GitHub App PR creation; issue retry/ignore/approve                                                                        |
@@ -50,10 +50,13 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 2 — Identity & access
 
-- [ ] auth module (register/login/refresh/logout/me)
-- [ ] api-keys module (prefix + sha256 hash, scopes)
-- [ ] members module (roles)
-- [ ] `AuthGuard`, `TenantGuard`, `@Public`, `@Roles`, `@Scopes`
+- [x] auth module (register/login/refresh/logout/me) — shortcut in `common/auth/jwt.ts` (HS256, no new deps)
+- [x] api-keys module (prefix + sha256 hash, scopes, revoke)
+- [x] members module (roles, last-owner protection)
+- [x] `AuthGuard` (JWT ∪ API key), `@Public`/`@Roles`/`@Scopes`, `@CurrentPrincipal`
+- [x] Ambient tenant context via `TenantContextInterceptor` (AuthGuard always resolves a tenant — no separate TenantGuard needed)
+- [x] `/v1` route prefix via `RouterModule` (health stays at `/`)
+- [x] e2e: refresh rotation + reuse detection, scope rejection (403), revocation (401)
 
 ## Phase 3 — Ingestion
 

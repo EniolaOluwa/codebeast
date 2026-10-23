@@ -113,4 +113,21 @@ export async function createApiKeyFixture(
   });
 }
 
+export async function createRefreshTokenFixture(
+  db: DbClient,
+  input: { tenantId: string; userId: string; tokenHash?: string },
+): Promise<{ id: string; tokenHash: string }> {
+  const suffix = uniqueSuffix("rt");
+
+  return db.refreshToken.create({
+    data: {
+      tenantId: input.tenantId,
+      userId: input.userId,
+      tokenHash: input.tokenHash ?? `hash-${suffix}`,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    },
+    select: { id: true, tokenHash: true },
+  });
+}
+
 export type TestPrismaClient = ReturnType<typeof createPrismaClient>;

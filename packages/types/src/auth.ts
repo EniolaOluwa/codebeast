@@ -82,3 +82,10 @@ export const memberUpdateInputSchema = z.object({
   role: membershipRoleSchema,
 });
 export type MemberUpdateInput = z.infer<typeof memberUpdateInputSchema>;
+
+export const meSchema = z.object({
+  user: userSchema,
+  tenantId: z.string().min(1),
+  role: membershipRoleSchema,
+});
+export type Me = z.infer<typeof meSchema>;

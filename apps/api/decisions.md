@@ -95,9 +95,10 @@ rather than rewrite. Status: `Accepted`, `Superseded`, `Proposed`.
   tenant check plus, on credential/routing tables, a single-row "claim" lookup keyed by
   a GUC that `PrismaService.withRls` sets transaction-locally:
   `app.current_user` (Membership), `app.current_api_key_prefix` (ApiKey),
-  `app.current_refresh_token_hash` (RefreshToken), `app.current_integration_external_id`
-  / `app.current_integration_id` (Integration). Unset GUCs read as NULL, so every policy
-  fails closed.
+  `app.current_refresh_token_hash` and `app.current_user` (RefreshToken — hash claim for
+  lookups, user claim so reuse detection can revoke the whole family),
+  `app.current_integration_external_id` / `app.current_integration_id` (Integration).
+  Unset GUCs read as NULL, so every policy fails closed.
 - **Consequences:** Credential lookups must go through `withRls` with the matching
   claim; plain queries see nothing. `WITH CHECK` still requires the acting tenant, so a
   claim can never write across tenants. Dev Postgres (superuser) bypasses RLS —

@@ -6,12 +6,17 @@ import { dockerAvailable } from "../support/docker.ts";
 import {
   createApiKeyFixture,
   createMembershipFixture,
+  createRefreshTokenFixture,
   createRepositoryFixture,
   createTenantFixture,
   createUserFixture,
 } from "../support/factories.ts";
 
-import { PrismaService, RLS_CONTEXT } from "../../src/prisma/prisma.service.ts";
+import {
+  PrismaService,
+  RLS_CONTEXT,
+  type RlsContext,
+} from "../../src/prisma/prisma.service.ts";
 
 /**
  * The Phase 1 acceptance gate: with the non-superuser `codebeast_app` role,
@@ -100,6 +105,37 @@ describe.runIf(dockerAvailable)("tenant isolation (RLS)", () => {
       async (tx) => tx.apiKey.findUnique({ where: { prefix: key.prefix } }),
     );
     expect(wrongClaim).toBeNull();
+  });
+
+  it("requires the tenant claim for writes even under a user claim (revocation path)", async () => {
+    const tenant = await createTenantFixture(db.admin);
+    const user = await createUserFixture(db.admin);
+    await createMembershipFixture(db.admin, {
+      tenantId: tenant.id,
+      userId: user.id,
+    });
+    await createRefreshTokenFixture(db.admin, {
+      tenantId: tenant.id,
+      userId: user.id,
+    });
+
+    const revoke = (claims: RlsContext) =>
+      service.withRls(claims, async (tx) =>
+        tx.refreshToken.updateMany({
+          where: { userId: user.id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        }),
+      );
+
+    // User claim alone: rows are visible, but WITH CHECK rejects the write.
+    await expect(revoke({ [RLS_CONTEXT.USER]: user.id })).rejects.toThrow();
+
+    // Tenant + user claims: the revocation succeeds.
+    const result = await revoke({
+      [RLS_CONTEXT.TENANT]: tenant.id,
+      [RLS_CONTEXT.USER]: user.id,
+    });
+    expect(result.count).toBe(1);
   });
 
   it("resolves a user's memberships with the user claim (login path)", async () => {

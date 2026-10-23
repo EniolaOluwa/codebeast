@@ -2,10 +2,12 @@ import { Controller, Get } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
 
+import { Public } from "../../common/auth/decorators.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import { HealthResponseDto, ReadinessResponseDto } from "./health.dto.ts";
 
 @ApiTags("health")
+@Public()
 @Controller()
 export class HealthController {
   constructor(
