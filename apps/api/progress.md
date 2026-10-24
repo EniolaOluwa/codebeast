@@ -5,10 +5,12 @@ Tracking doc for the control-plane MVP. Status legend: `[ ]` todo, `[~]` in prog
 
 ## Snapshot
 
-- **Branch:** `feat-backend/api-mvp` (recommended; based on `feat-backend/develop`)
+- **Branch:** `feat/api-control-plane`
 - **Milestone:** Control-plane MVP
 - **Updated:** 2026-10-19
-- **Baseline green:** `pnpm --filter @repo/api lint && check-types && test`
+- **Baseline green:** `pnpm --filter @repo/api lint && check-types && test` (58 tests)
+- **Runtime smoke:** boot on `:3001`, `/health`, login, repo list, API key create, and
+  signed-webhook idempotency verified against local Postgres + Redis.
 
 ## Locked decisions
 
@@ -18,67 +20,76 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phases
 
-| #   | Phase             | Status | Acceptance criteria                                                                                                                                     |
-| --- | ----------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0   | Contracts         | `[ ]`  | Zod schemas + enums/state machine in `@repo/types`; imported by api                                                                                     |
-| 1   | Data foundation   | `[ ]`  | Schema + migration + RLS + `codebeast_app` role + seed; `withTenant`, `CryptoService`, config; cross-tenant read returns empty                          |
-| 2   | Identity & access | `[ ]`  | register/login/refresh/logout/me, API keys, members, guards; scope rejection tests pass                                                                 |
-| 3   | Ingestion         | `[ ]`  | repo/integration CRUD; Slack/Sentry/GitHub/Jira webhooks with signature verify + idempotency; duplicate webhook produces one event; bad signature → 401 |
-| 4   | Orchestration     | `[ ]`  | BullMQ queues; run state machine; `AgentClient` (stubbed); retry/backoff/escalation per root §6.4                                                       |
-| 5   | Delivery          | `[ ]`  | patch/validation persistence; GitHub App PR creation; issue retry/ignore/approve                                                                        |
-| 6   | Hardening         | `[ ]`  | audit logs; readiness (db+redis); metrics; rate limits; Swagger; RCL refresh                                                                            |
+| #   | Phase             | Status | Notes                                                                                                                |
+| --- | ----------------- | ------ | -------------------------------------------------------------------------------------------------------------------- |
+| 0   | Contracts         | `[x]`  | Zod schemas/enums + `MAX_ATTEMPTS` in `@repo/types`; api imports them                                                |
+| 1   | Data foundation   | `[x]`  | Schema/migrations/RLS/seed + `withTenant`/crypto/config; `codebeast_app` role added (dev URL still admin, see E-002) |
+| 2   | Identity & access | `[x]`  | register/login/refresh/logout/me, API keys, members, guard; unit tests pass                                          |
+| 3   | Ingestion         | `[x]`  | repo/integration CRUD; four webhooks; signature verify + idempotency; triage                                         |
+| 4   | Orchestration     | `[x]`  | BullMQ queue + runner; run state machine; `AgentClient` HTTP; retries/escalation                                     |
+| 5   | Delivery          | `[x]`  | patch/validation persistence, GitHub App PR creation, issue retry/ignore/approve                                     |
+| 6   | Hardening         | `[~]`  | audit list, RLS integration harness, OpenAPI regression; readiness/metrics/rate limits pending                       |
 
 ## Phase 0 — Contracts
 
-- [ ] `errorEnvelope`, `paginatedResponse` schemas
-- [ ] `issueContext`, `planBlueprint`, `patchSubmission`, `validationResult`
-- [ ] `runStatus` + run/issue/integration enums
-- [ ] Convert `@repo/types` interfaces to Zod; keep package name
+- [x] `errorEnvelope`, `paginatedResponse`, `webhookEnvelope` schemas
+- [x] `issueContext`, `planBlueprint`, `patchSubmission`, `validationResult`
+- [x] run/issue/integration enums + run state machine
+- [x] Convert `@repo/types` to a buildable Zod package at `dist/`
 
 ## Phase 1 — Data foundation
 
-- [ ] Prisma models: Tenant, Membership, ApiKey, RefreshToken, Repository,
-      Integration, GitHubInstallation, SlackWorkspace, WebhookEvent, Issue,
-      IssueSignal, Run, Plan, Patch, FileChange, ValidationRun, PullRequest, AuditLog
-- [ ] Additive migration + RLS policies + `codebeast_app` role
-- [ ] `TenantContext` (AsyncLocalStorage) + `PrismaService.withTenant`
-- [ ] `CryptoService` (AES-256-GCM) + config/env additions
-- [ ] Extend `env.schema.ts` and `.env.example`
+- [x] Prisma models: Tenant, User, Membership, ApiKey, RefreshToken, Repository,
+      Integration, GitHubInstallation, SlackWorkspace, WebhookEvent, Issue, IssueSignal,
+      Run, Plan, Patch, FileChange, ValidationRun, PullRequest, AuditLog
+- [x] Additive migrations `20261019213715_control_plane`, `20261019214200_rls`,
+      `20261019221500_app_role`
+- [x] `codebeast_app` non-superuser role + grants (runtime URL still admin, see E-002)
+- [x] Tenant context (AsyncLocalStorage + `withTenant`/`withTenantId`)
+- [x] `CryptoService` (AES-256-GCM) + env/config additions
+- [x] Seed tenant `demo` / user `demo@codebeast.app` / password `password123`
 
 ## Phase 2 — Identity & access
 
-- [ ] auth module (register/login/refresh/logout/me)
-- [ ] api-keys module (prefix + sha256 hash, scopes)
-- [ ] members module (roles)
-- [ ] `AuthGuard`, `TenantGuard`, `@Public`, `@Roles`, `@Scopes`
+- [x] auth module (register/login/refresh/logout/me)
+- [x] api-keys module (prefix + sha256 hash, scopes)
+- [x] members module (roles)
+- [x] `AuthGuard` with `@Public`, `@Roles`, `@Scopes` (JWT + API key)
 
 ## Phase 3 — Ingestion
 
-- [ ] repositories + integrations CRUD
-- [ ] webhook controllers (Slack/Sentry/GitHub/Jira) + signature verification
-- [ ] `WebhookEvent` idempotency + `ingest` queue enqueue
-- [ ] triage/correlation service
+- [x] repositories + integrations CRUD
+- [x] webhook controllers (Slack/Sentry/GitHub/Jira) + signature verification
+- [x] `WebhookEvent` idempotency (unique provider + delivery id)
+- [x] triage/correlation service + auto-start run when issue has a repository
 
 ## Phase 4 — Orchestration
 
-- [ ] Redis/BullMQ module + queues (ingest/triage/plan/code/validate/pr)
-- [ ] `Run` state machine + attempt accounting
-- [ ] `AgentClient` interface + stub
-- [ ] workers with retry/backoff/escalation
+- [x] Redis/BullMQ queue module + noop fallback for tests (`QUEUE_ENABLED=false`)
+- [x] `Run` state machine + attempt accounting (max 3, one replan)
+- [x] `AgentClient` HTTP client (`/plan`, `/code`, `/validate`) + `GithubClient`
+- [x] pipeline runner with escalation on low confidence/exhaustion/agent failure
 
 ## Phase 5 — Delivery
 
-- [ ] Patch/FileChange/ValidationRun persistence
-- [ ] GitHub App token exchange + PR creation (`@octokit/auth-app`)
-- [ ] issue actions: retry / ignore / approve
+- [x] Patch/FileChange/ValidationRun persistence
+- [x] GitHub App token exchange + PR creation (manual REST, no octokit)
+- [x] issue actions: retry / ignore / approve
+- [!] Requires `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`; otherwise run escalates
 
 ## Phase 6 — Hardening
 
-- [ ] audit log interceptor + `GET /v1/audit-logs`
-- [ ] extended readiness (db + redis)
+- [x] audit list endpoint `GET /v1/audit-logs`
+- [ ] readiness (db + redis)
 - [ ] metrics + webhook/login rate limits
-- [ ] per-repo RCL + Swagger polish
+- [x] Swagger typed responses for every endpoint + response-schema regression test
+- [x] OpenAPI scan regression test (`src/__tests__/openapi.test.ts`)
+- [x] Testcontainers harness for tenant isolation (`test:integration`, `codebeast_app`)
+- [ ] Integration coverage for webhook idempotency + run transitions
 
 ## Next action
 
-Start **Phase 0**: freeze contracts and add Zod schemas to `@repo/types`.
+1. Design auth-bootstrap RLS policies (or a narrow privileged path) so the runtime can
+   connect as `codebeast_app`; then switch `apps/api/.env`.
+2. Add integration coverage for webhook idempotency + run transitions.
+3. Extended readiness (db + redis), metrics, and rate limits.

@@ -18,6 +18,9 @@ export default defineConfig({
     env: {
       DATABASE_URL: "postgresql://test:test@localhost:5432/test",
       NODE_ENV: "test",
+      QUEUE_ENABLED: "false",
+      JWT_SECRET: "test-secret-value-that-is-long-enough",
+      ENCRYPTION_KEY: "test-encryption-key-that-is-long-enough",
     },
     coverage: {
       provider: "v8",

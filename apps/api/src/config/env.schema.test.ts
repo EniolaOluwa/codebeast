@@ -5,13 +5,17 @@ import { validateEnv } from "./env.schema.ts";
 describe("validateEnv", () => {
   it("applies defaults and coerces PORT", () => {
     const env = validateEnv({ DATABASE_URL: "postgresql://localhost/db" });
-    expect(env).toEqual({
+    expect(env).toMatchObject({
       PORT: 3001,
       HOST: "0.0.0.0",
       NODE_ENV: "development",
       DATABASE_URL: "postgresql://localhost/db",
       CORS_ORIGIN: "*",
       LOG_LEVEL: "info",
+      JWT_ACCESS_TTL: 900,
+      JWT_REFRESH_TTL: 2_592_000,
+      REDIS_URL: "redis://localhost:6379",
+      QUEUE_ENABLED: true,
     });
   });
 

@@ -83,3 +83,34 @@ rather than rewrite. Status: `Accepted`, `Superseded`, `Proposed`.
   signature/idempotency, run transitions.
 - **Consequences:** Adds `testcontainers` + `@testcontainers/*` dev deps; slower but
   deterministic and isolated.
+
+## ADR-009 — One pipeline queue, stage transitions inside the runner
+
+- **Status:** Accepted (supersedes the six-queue list in ADR-004)
+- **Context:** The MVP has a single linear plan → code ⇄ validate → PR flow. Splitting
+  it across six queues adds routing and partial-failure complexity before there is load.
+- **Decision:** Use one BullMQ queue (`pipeline`) that runs `PipelineRunner`. The runner
+  persists `Run.stage` between steps, and jobs are idempotent by `runId`.
+- **Consequences:** Simple retry/backoff and one worker pool. If stages need independent
+  scaling later, split them without changing the persisted state machine.
+
+## ADR-010 — Manual GitHub REST client instead of `@octokit/auth-app`
+
+- **Status:** Accepted (refines ADR-005)
+- **Context:** The MVP needs App JWT → installation token → branch/commit/PR. Octokit
+  adds dependencies for a small, well-documented REST surface.
+- **Decision:** Implement the flow with `fetch` and `node:crypto` in
+  `src/clients/github.client.ts`; sign RS256 App JWTs and cache installation tokens in
+  memory until near expiry.
+- **Consequences:** No new runtime dependency. The client must be revisited if GitHub
+  changes the flow or if we need webhook/checks APIs.
+
+## ADR-011 — `scrypt` password hashing, no native dependency
+
+- **Status:** Accepted
+- **Context:** Password auth needs a memory-hard KDF; `bcrypt`/`argon2` require native
+  builds that complicate Docker and edge deploys.
+- **Decision:** Use Node's `crypto.scrypt` with a random 16-byte salt and store
+  `scrypt$N$r$p$salt$hash` (timing-safe compare).
+- **Consequences:** No native modules. Parameters are embedded in each hash, so they can
+  be upgraded without invalidating existing credentials.

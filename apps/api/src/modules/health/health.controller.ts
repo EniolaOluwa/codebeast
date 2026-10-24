@@ -1,12 +1,14 @@
-import { Controller, Get } from "@nestjs/common";
+import { Controller, Get, VERSION_NEUTRAL } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
 
+import { Public } from "../../common/decorators/public.decorator.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import { HealthResponseDto, ReadinessResponseDto } from "./health.dto.ts";
 
 @ApiTags("health")
-@Controller()
+@Public()
+@Controller({ version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
     private readonly config: ConfigService,
