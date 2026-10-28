@@ -25,6 +25,9 @@ describe("validateEnv", () => {
       JIRA_CLIENT_MODE: "stub",
       DISCORD_CLIENT_MODE: "stub",
       FRESHDESK_CLIENT_MODE: "stub",
+      AGENT_CLIENT_MODE: "stub",
+      AGENT_SERVICE_URL: "http://localhost:3002",
+      AGENT_SERVICE_TOKEN: "dev-agent-token-change-me",
     });
   });
 

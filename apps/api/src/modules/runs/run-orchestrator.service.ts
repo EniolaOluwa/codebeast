@@ -1,6 +1,12 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { MAX_ATTEMPTS, type RunStatus, truncateToBytes } from "@repo/types";
+import {
+  type IssueContext,
+  MAX_ATTEMPTS,
+  type RepositoryCheckout,
+  type RunStatus,
+  truncateToBytes,
+} from "@repo/types";
 
 import {
   AGENT_CLIENT,
@@ -11,6 +17,7 @@ import {
   GITHUB_CLIENT,
   type GitHubClient,
 } from "../../clients/github.client.ts";
+import { GitHubInstallationTokenService } from "../../clients/github-installation-token.service.ts";
 import { JIRA_CLIENT, type JiraClient } from "../../clients/jira.client.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import {
@@ -75,6 +82,7 @@ export class RunOrchestrator {
     @Inject(GITHUB_CLIENT) private readonly github: GitHubClient,
     @Inject(JIRA_CLIENT) private readonly jira: JiraClient,
     private readonly ruleEngine: RuleEngine,
+    private readonly githubTokens: GitHubInstallationTokenService,
     config: ConfigService,
   ) {
     this.coalesceMs = config.getOrThrow<number>("INGEST_COALESCE_MS");
@@ -187,7 +195,19 @@ export class RunOrchestrator {
       job.tenantId,
       run.issueId,
     );
-    const result = await this.agent.plan({ context });
+    const checkout = await this.resolveCheckout(job.tenantId, context);
+    if (context.repository && !checkout) {
+      await this.applyDecision(run, "PLANNING", "retryable", {
+        reason:
+          "repository linked but no GitHub installation token available for checkout",
+      });
+      return;
+    }
+
+    const result = await this.agent.plan({
+      context,
+      ...(checkout ? { checkout } : {}),
+    });
 
     if (!result.ok) {
       await this.applyDecision(
@@ -258,11 +278,20 @@ export class RunOrchestrator {
       job.tenantId,
       run.issueId,
     );
+    const checkout = await this.resolveCheckout(job.tenantId, context);
+    if (context.repository && !checkout) {
+      await this.applyDecision(run, "CODING", "retryable", {
+        reason:
+          "repository linked but no GitHub installation token available for checkout",
+      });
+      return;
+    }
 
     const result = await this.agent.code({
       context,
       plan,
       ...(run.lastError ? { previousError: run.lastError } : {}),
+      ...(checkout ? { checkout } : {}),
     });
 
     if (!result.ok) {
@@ -310,9 +339,22 @@ export class RunOrchestrator {
       job.tenantId,
       run.issueId,
     );
+    const checkout = await this.resolveCheckout(job.tenantId, context);
+    if (context.repository && !checkout) {
+      await this.applyDecision(run, "VALIDATING", "retryable", {
+        reason:
+          "repository linked but no GitHub installation token available for checkout",
+        retryTo: "VALIDATING",
+      });
+      return;
+    }
 
     const result = patch
-      ? await this.agent.validate({ patch, context })
+      ? await this.agent.validate({
+          patch,
+          context,
+          ...(checkout ? { checkout } : {}),
+        })
       : {
           ok: false as const,
           failure: {
@@ -349,6 +391,7 @@ export class RunOrchestrator {
           typesPassed: validation.typesPassed,
           output: validation.output,
           durationMs: validation.durationMs ?? null,
+          sandboxRunId: validation.sandboxRunId ?? null,
         },
       });
     });
@@ -787,6 +830,30 @@ export class RunOrchestrator {
       case "retryable":
         return "retryable";
     }
+  }
+
+  /**
+   * Mint a short-lived checkout token when the issue has a linked repository.
+   * Never logs the token. Returns null if App/installation is missing.
+   */
+  private async resolveCheckout(
+    tenantId: string,
+    context: IssueContext,
+  ): Promise<RepositoryCheckout | null> {
+    if (!context.repository) {
+      return null;
+    }
+
+    const token = await this.githubTokens.mintInstallationToken(tenantId);
+    if (!token) {
+      return null;
+    }
+
+    return {
+      fullName: context.repository.fullName,
+      ref: context.repository.defaultBranch,
+      token,
+    };
   }
 
   private async publishStage(

@@ -1,0 +1,9 @@
+{
+  "name": "minimal-repo",
+  "private": true,
+  "scripts": {
+    "test": "node -e \"process.exit(0)\"",
+    "lint": "node -e \"process.exit(0)\"",
+    "check-types": "node -e \"process.exit(0)\""
+  }
+}

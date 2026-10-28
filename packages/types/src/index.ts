@@ -1,3 +1,4 @@
+export * from "./agent-service.ts";
 export * from "./api.ts";
 export * from "./auth.ts";
 export * from "./enums.ts";

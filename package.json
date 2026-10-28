@@ -14,6 +14,7 @@
   "scripts": {
     "prepare": "husky",
     "dev": "turbo dev",
+    "dev:agent": "pnpm --filter @repo/agent dev",
     "dev:full": "docker-compose -f docker-compose.dev.yml up -d && pnpm dev",
     "dev:down": "docker-compose -f docker-compose.dev.yml down",
     "build": "turbo build",

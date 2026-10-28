@@ -27,5 +27,32 @@ services:
       timeout: 5s
       retries: 5
 
+  agent:
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: "3002"
+      HOST: "0.0.0.0"
+      NODE_ENV: development
+      LOG_LEVEL: info
+      AGENT_SERVICE_TOKEN: ${AGENT_SERVICE_TOKEN:-dev-agent-token-change-me}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL_PLANNER: ${LLM_MODEL_PLANNER:-deepseek-reasoner}
+      LLM_MODEL_CODER: ${LLM_MODEL_CODER:-deepseek-chat}
+      WORKSPACE_ROOT: /workspaces
+      SANDBOX_IMAGE: ${SANDBOX_IMAGE:-node:22-bookworm}
+      SANDBOX_TIMEOUT_MS: "600000"
+    volumes:
+      - agent_workspaces:/workspaces
+      - /var/run/docker.sock:/var/run/docker.sock
+    profiles:
+      - agent
+
 volumes:
   postgres_data:
+  agent_workspaces:

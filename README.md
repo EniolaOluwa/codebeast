@@ -14,6 +14,7 @@ every step has a check.
 | ------------- | --------------------- | --------------------------------------- |
 | Web (Next.js) | http://localhost:3000 | Landing + console (sign in at `/login`) |
 | API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`               |
+| Agent         | http://localhost:3002 | LLM planner/coder + Docker validator    |
 | PostgreSQL    | localhost:5434        | Docker container, db `codebeast`        |
 | Redis         | localhost:6379        | BullMQ queues (Docker container)        |
 
@@ -47,6 +48,7 @@ pnpm install
 
 # 2. Environment files (once per clone)
 cp apps/api/.env.example apps/api/.env
+cp apps/agent/.env.example apps/agent/.env   # set LLM_API_KEY for real plan/code
 cp packages/db/.env.example packages/db/.env
 
 # 3. Database: start postgres, generate the client, apply migrations
@@ -72,24 +74,39 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 
 `apps/api/.env` (from `apps/api/.env.example`) — `DATABASE_URL` is required; the rest have defaults.
 
-| Variable                                                             | Default                               |
-| -------------------------------------------------------------------- | ------------------------------------- |
-| `DATABASE_URL`                                                       | (required)                            |
-| `PORT`                                                               | `3001`                                |
-| `HOST`                                                               | `0.0.0.0`                             |
-| `NODE_ENV`                                                           | `development`                         |
-| `LOG_LEVEL`                                                          | `info`                                |
-| `CORS_ORIGIN`                                                        | `*`                                   |
-| `JWT_SECRET`                                                         | dev-only (required in production)     |
-| `ENCRYPTION_KEY`                                                     | dev-only (required in production)     |
-| `AUTH_ACCESS_TTL_SECONDS`                                            | `900`                                 |
-| `AUTH_REFRESH_TTL_SECONDS`                                           | `1209600`                             |
-| `WEBHOOK_RAW_TTL_DAYS`                                               | `7`                                   |
-| `REDIS_URL`                                                          | `redis://localhost:6379`              |
-| `INGEST_COALESCE_MS`                                                 | `30000`                               |
-| `GITHUB_APP_ID`                                                      | (optional — stub client if unset)     |
-| `GITHUB_APP_PRIVATE_KEY_BASE64`                                      | (optional)                            |
-| `JIRA_CLIENT_MODE` / `DISCORD_CLIENT_MODE` / `FRESHDESK_CLIENT_MODE` | `stub` (set `api` for real providers) |
+| Variable                                                             | Default                                  |
+| -------------------------------------------------------------------- | ---------------------------------------- |
+| `DATABASE_URL`                                                       | (required)                               |
+| `PORT`                                                               | `3001`                                   |
+| `HOST`                                                               | `0.0.0.0`                                |
+| `NODE_ENV`                                                           | `development`                            |
+| `LOG_LEVEL`                                                          | `info`                                   |
+| `CORS_ORIGIN`                                                        | `*`                                      |
+| `JWT_SECRET`                                                         | dev-only (required in production)        |
+| `ENCRYPTION_KEY`                                                     | dev-only (required in production)        |
+| `AUTH_ACCESS_TTL_SECONDS`                                            | `900`                                    |
+| `AUTH_REFRESH_TTL_SECONDS`                                           | `1209600`                                |
+| `WEBHOOK_RAW_TTL_DAYS`                                               | `7`                                      |
+| `REDIS_URL`                                                          | `redis://localhost:6379`                 |
+| `INGEST_COALESCE_MS`                                                 | `30000`                                  |
+| `GITHUB_APP_ID`                                                      | (optional — stub client if unset)        |
+| `GITHUB_APP_PRIVATE_KEY_BASE64`                                      | (optional)                               |
+| `JIRA_CLIENT_MODE` / `DISCORD_CLIENT_MODE` / `FRESHDESK_CLIENT_MODE` | `stub` (set `api` for real providers)    |
+| `AGENT_CLIENT_MODE`                                                  | `stub` (set `http` to call `apps/agent`) |
+| `AGENT_SERVICE_URL`                                                  | `http://localhost:3002`                  |
+| `AGENT_SERVICE_TOKEN`                                                | shared Bearer with the agent service     |
+
+`apps/agent/.env` (from `apps/agent/.env.example`) — LLM and sandbox settings:
+
+| Variable                                | Notes                               |
+| --------------------------------------- | ----------------------------------- |
+| `LLM_BASE_URL` / `LLM_API_KEY`          | OpenAI-compatible chat API          |
+| `LLM_MODEL_PLANNER` / `LLM_MODEL_CODER` | Model ids (provider-agnostic)       |
+| `AGENT_SERVICE_TOKEN`                   | Must match the API                  |
+| `WORKSPACE_ROOT` / `SANDBOX_IMAGE`      | Git cache + Docker validation image |
+
+`pnpm dev` starts the agent locally on port 3002 (alongside api and web). For a Dockerized agent with the sandbox socket mounted:  
+`docker-compose -f docker-compose.dev.yml --profile agent up -d agent`
 
 `packages/db/.env` (from `packages/db/.env.example`) holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
 
@@ -97,8 +114,9 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 
 | Command                          | Description                                                 |
 | -------------------------------- | ----------------------------------------------------------- |
-| `pnpm dev`                       | Run api + web                                               |
-| `pnpm dev:full`                  | Start postgres + api + web                                  |
+| `pnpm dev`                       | Run api + web + agent                                       |
+| `pnpm dev:agent`                 | Run only the agent service                                  |
+| `pnpm dev:full`                  | Start postgres/redis + api + web + agent                    |
 | `pnpm dev:down`                  | Stop the postgres container                                 |
 | `pnpm build`                     | Build all apps                                              |
 | `pnpm lint`                      | Lint all apps                                               |
@@ -133,6 +151,7 @@ Deterministic, non-interactive. Stop at the first failing check and report the o
 
    ```bash
    test -f apps/api/.env || cp apps/api/.env.example apps/api/.env
+   test -f apps/agent/.env || cp apps/agent/.env.example apps/agent/.env
    test -f packages/db/.env || cp packages/db/.env.example packages/db/.env
    ```
 

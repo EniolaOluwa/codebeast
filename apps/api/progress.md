@@ -146,6 +146,14 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 - [ ] stalled-run reaper + raw-payload janitor
 - [ ] per-repo RCL + Swagger polish
 
+## Phase 10 — Agent service
+
+- [x] `@repo/types` agent-service wire contracts (`RepositoryCheckout`, plan/code/validate requests)
+- [x] `apps/agent` Fastify worker: planner → coder → Docker validator
+- [x] Provider-agnostic `LLM_*` env (OpenAI-compatible chat client)
+- [x] `HttpAgentClient` + `AGENT_CLIENT_MODE=stub|http` + GitHub installation checkout tokens
+- [x] Dev compose profile `agent` (Docker socket + workspace volume)
+
 ## Next action
 
-Start **Phase 9**: Hardening — audit log interceptor + `GET /v1/audit-logs` → Activity page, readiness (db + redis), metrics, rate limits, stalled-run reaper, raw-payload janitor, Swagger/RCL polish.
+Start **Phase 9**: Hardening — audit log interceptor + `GET /v1/audit-logs` → Activity page, readiness (db + redis), metrics, rate limits, stalled-run reaper, raw-payload janitor, Swagger/RCL polish. Or run the real agent locally via `docker-compose -f docker-compose.dev.yml --profile agent up -d agent` with `AGENT_CLIENT_MODE=http`.
