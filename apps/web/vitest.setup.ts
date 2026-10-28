@@ -27,3 +27,11 @@ vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
   revalidateTag: vi.fn(),
 }));
+
+vi.mock("next/font/google", () => ({
+  Inter: () => ({ variable: "--font-inter", className: "font-inter" }),
+  JetBrains_Mono: () => ({
+    variable: "--font-jetbrains",
+    className: "font-jetbrains",
+  }),
+}));

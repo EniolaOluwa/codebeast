@@ -1,84 +1,318 @@
-import { Injectable } from "@nestjs/common";
-import type { PaginationMeta } from "@repo/types";
+import { Inject, Injectable } from "@nestjs/common";
+import type { IssueStatus, PaginatedResponse, Provider } from "@repo/types";
 
-import { TenantContext } from "../../common/context/tenant-context.ts";
-import { NotFoundError } from "../../common/errors/errors.ts";
-import { paginationMeta } from "../../common/pagination/pagination.ts";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "../../common/errors/errors.ts";
+import { paginated, skipTake } from "../../common/pagination.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
-import type { ListIssuesQueryDto } from "../runs/dto.ts";
-import { RunService } from "../runs/run.service.ts";
+import {
+  QUEUE_PUBLISHER,
+  type QueuePublisher,
+} from "../../queues/queue.types.ts";
+import { RunOrchestrator } from "../runs/run-orchestrator.service.ts";
+import { TERMINAL_RUN_STATUSES } from "../runs/run-state-machine.ts";
+
+export interface TicketView {
+  id: string;
+  key: string;
+  url: string;
+  projectKey: string;
+  issueType: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface IssueView {
+  id: string;
+  title: string;
+  status: IssueStatus;
+  correlationKey: string;
+  signalCount: number;
+  /** Distinct providers among the newest signals (Reports-table chips). */
+  providers: Provider[];
+  repository: { fullName: string; defaultBranch: string } | null;
+  ticket: TicketView | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  createdAt: string;
+}
+
+export interface IssueSignalView {
+  id: string;
+  provider: Provider;
+  eventType: string;
+  title: string;
+  body: string;
+  url: string | null;
+  actor: string | null;
+  occurredAt: string;
+}
+
+export interface IssueDetailView extends IssueView {
+  summary: string;
+  signals: IssueSignalView[];
+}
+
+interface IssueRow {
+  id: string;
+  title: string;
+  status: IssueStatus;
+  correlationKey: string;
+  signalCount: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  createdAt: Date;
+  repository: { fullName: string; defaultBranch: string } | null;
+  ticket: {
+    id: string;
+    key: string;
+    url: string;
+    projectKey: string;
+    issueType: string;
+    summary: string;
+    createdAt: Date;
+  } | null;
+  signals?: { provider: Provider }[];
+}
+
+export function toIssueView(row: IssueRow): IssueView {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    correlationKey: row.correlationKey,
+    signalCount: row.signalCount,
+    providers: [
+      ...new Set((row.signals ?? []).map((signal) => signal.provider)),
+    ],
+    repository: row.repository,
+    ticket: row.ticket
+      ? {
+          id: row.ticket.id,
+          key: row.ticket.key,
+          url: row.ticket.url,
+          projectKey: row.ticket.projectKey,
+          issueType: row.ticket.issueType,
+          summary: row.ticket.summary,
+          createdAt: row.ticket.createdAt.toISOString(),
+        }
+      : null,
+    firstSeenAt: row.firstSeenAt.toISOString(),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+const REPOSITORY_SELECT = {
+  select: { fullName: true, defaultBranch: true },
+} as const;
+
+const ISSUE_INCLUDE = {
+  repository: REPOSITORY_SELECT,
+  ticket: true,
+  // Only used to build the provider chips in list views.
+  signals: {
+    select: { provider: true },
+    orderBy: { occurredAt: "desc" },
+    take: 3,
+  },
+} as const;
 
 @Injectable()
 export class IssuesService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly tenantContext: TenantContext,
-    private readonly runService: RunService,
+    private readonly orchestrator: RunOrchestrator,
+    @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
   ) {}
 
-  async list(query: ListIssuesQueryDto): Promise<{
-    data: unknown[];
-    pagination: PaginationMeta;
-  }> {
-    const { page, limit, status, repositoryId, severity } = query;
+  async list(
+    tenantId: string,
+    page: number,
+    limit: number,
+    status?: IssueStatus,
+  ): Promise<PaginatedResponse<IssueView>> {
+    const { skip, take } = skipTake(page, limit);
+    const where = { tenantId, ...(status ? { status } : {}) };
 
-    const result = await this.prisma.withTenant(async (tx) => {
-      const where = {
-        ...(status ? { status } : {}),
-        ...(repositoryId ? { repositoryId } : {}),
-        ...(severity ? { severity } : {}),
-      };
-      const [rows, total] = await Promise.all([
+    const [rows, total] = await this.prisma.withTenant(tenantId, (tx) =>
+      Promise.all([
         tx.issue.findMany({
           where,
-          orderBy: [{ severity: "desc" }, { lastSeenAt: "desc" }],
-          skip: (page - 1) * limit,
-          take: limit,
-          include: { repository: true },
+          orderBy: { lastSeenAt: "desc" },
+          skip,
+          take,
+          include: ISSUE_INCLUDE,
         }),
         tx.issue.count({ where }),
-      ]);
-      return { rows, total };
-    });
+      ]),
+    );
+
+    return paginated(rows.map(toIssueView), page, limit, total);
+  }
+
+  async get(tenantId: string, id: string): Promise<IssueDetailView> {
+    const row = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id, tenantId },
+        include: {
+          ...ISSUE_INCLUDE,
+          signals: { orderBy: { occurredAt: "asc" } },
+        },
+      }),
+    );
+
+    if (!row) {
+      throw new NotFoundError("Issue");
+    }
 
     return {
-      data: result.rows,
-      pagination: paginationMeta(page, limit, result.total),
+      ...toIssueView(row),
+      summary: row.summary,
+      signals: row.signals.map((signal) => ({
+        id: signal.id,
+        provider: signal.provider,
+        eventType: signal.eventType,
+        title: signal.title,
+        body: signal.body,
+        url: signal.url,
+        actor: signal.actor,
+        occurredAt: signal.occurredAt.toISOString(),
+      })),
     };
   }
 
-  async get(id: string): Promise<unknown> {
-    return this.prisma.withTenant(async (tx) => {
-      const issue = await tx.issue.findUnique({
-        where: { id },
-        include: {
-          repository: true,
-          signals: { orderBy: { occurredAt: "asc" } },
-          runs: { orderBy: { createdAt: "desc" } },
-          pullRequests: true,
+  /** Re-runs the pipeline for a finished issue (fresh run, attempts reset). */
+  async retry(tenantId: string, issueId: string): Promise<IssueDetailView> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (!["FAILED", "ESCALATED", "IGNORED"].includes(issue.status)) {
+      throw new ValidationError(
+        `Only failed, escalated or ignored reports can be retried (current: ${issue.status})`,
+      );
+    }
+
+    const open = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.run.findFirst({
+        where: {
+          issueId,
+          status: { notIn: [...TERMINAL_RUN_STATUSES] },
         },
+        select: { id: true },
+      }),
+    );
+
+    if (open) {
+      throw new ConflictError("A run is already in progress for this report");
+    }
+
+    await this.orchestrator.startRun(tenantId, issueId);
+    return this.get(tenantId, issueId);
+  }
+
+  /** Ignores the report and cancels any in-flight run. */
+  async ignore(tenantId: string, issueId: string): Promise<IssueDetailView> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (issue.status === "RESOLVED") {
+      throw new ValidationError("Resolved reports cannot be ignored");
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      // Pending stage jobs become no-ops: the orchestrator guards on status.
+      await tx.run.updateMany({
+        where: { issueId, status: { notIn: [...TERMINAL_RUN_STATUSES] } },
+        data: { status: "CANCELLED", finishedAt: new Date() },
       });
-      if (!issue) {
-        throw new NotFoundError("Issue");
-      }
-      return issue;
+
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "IGNORED" },
+      });
     });
+
+    return this.get(tenantId, issueId);
   }
 
-  async retry(id: string): Promise<{ runId: string }> {
-    const run = await this.runService.start(id);
-    return { runId: run.id };
+  /** Human closes the loop: the fix shipped, mark it resolved. */
+  async approve(tenantId: string, issueId: string): Promise<IssueDetailView> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (issue.status !== "PR_OPENED") {
+      throw new ValidationError(
+        `Only reports with an open pull request can be approved (current: ${issue.status})`,
+      );
+    }
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.issue.update({
+        where: { id: issueId },
+        data: { status: "RESOLVED", resolvedAt: new Date() },
+      });
+    });
+
+    return this.get(tenantId, issueId);
   }
 
-  async ignore(id: string): Promise<{ status: "IGNORED" | "RESOLVED" }> {
-    const tenantId = this.tenantContext.requireTenantId();
-    await this.runService.setIssueStatus(tenantId, id, "IGNORED");
-    return { status: "IGNORED" };
+  /** Ship step: opens the pull request via the pr queue (READY or TICKETED). */
+  async shipPr(tenantId: string, issueId: string): Promise<{ accepted: true }> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (issue.status !== "READY" && issue.status !== "TICKETED") {
+      throw new ValidationError(
+        `Only ready or ticketed reports can open a pull request (current: ${issue.status})`,
+      );
+    }
+
+    await this.publisher.publish(
+      "pr",
+      { tenantId, issueId },
+      { jobId: `ship-${issueId}-pr` },
+    );
+
+    return { accepted: true };
   }
 
-  async approve(id: string): Promise<{ status: "IGNORED" | "RESOLVED" }> {
-    const tenantId = this.tenantContext.requireTenantId();
-    await this.runService.setIssueStatus(tenantId, id, "RESOLVED");
-    return { status: "RESOLVED" };
+  /** Ship step: creates the Jira ticket via the ticket queue. */
+  async createTicket(
+    tenantId: string,
+    issueId: string,
+  ): Promise<{ accepted: true }> {
+    const issue = await this.loadIssue(tenantId, issueId);
+
+    if (!["READY", "TICKETED", "PR_OPENED"].includes(issue.status)) {
+      throw new ValidationError(
+        `Only ready, ticketed or shipped reports can get a ticket (current: ${issue.status})`,
+      );
+    }
+
+    await this.publisher.publish(
+      "ticket",
+      { tenantId, issueId },
+      { jobId: `ticket-${issueId}-create` },
+    );
+
+    return { accepted: true };
+  }
+
+  private async loadIssue(
+    tenantId: string,
+    issueId: string,
+  ): Promise<{ id: string; status: IssueStatus }> {
+    const issue = await this.prisma.withTenant(tenantId, (tx) =>
+      tx.issue.findFirst({
+        where: { id: issueId, tenantId },
+        select: { id: true, status: true },
+      }),
+    );
+
+    if (!issue) {
+      throw new NotFoundError("Issue");
+    }
+
+    return issue;
   }
 }

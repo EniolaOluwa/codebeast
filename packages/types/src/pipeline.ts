@@ -1,90 +1,100 @@
 import { z } from "zod";
 
-import { IssueContextSchema } from "./issue.ts";
+import { paginationQuerySchema } from "./api.ts";
+import { runStatusSchema, type RunStatus } from "./enums.ts";
 
 /**
- * Planner output — mirrors root AGENTS.md §6.1.
+ * Agent pipeline contracts (root `AGENTS.md` §6) and the run state machine.
+ * The state machine encodes §6.4: up to 3 attempts, one replan, then
+ * escalate. State and attempt accounting live in Postgres; this module is the
+ * single source of truth for which transitions are legal.
  */
-export const PlanBlueprintSchema = z.object({
-  rootCause: z.string().min(1),
-  filesToInspect: z.array(z.string().min(1)).min(1).max(15),
-  changeStrategy: z.string().min(1),
-  testsToRun: z.array(z.string().min(1)),
-  confidence: z.number().min(0).max(1),
-  needsMoreContext: z.boolean(),
-  missingContext: z.array(z.string()).optional(),
-});
-export type PlanBlueprint = z.infer<typeof PlanBlueprintSchema>;
-
-export const FileChangeSchema = z.object({
-  path: z.string().min(1),
-  oldContent: z.string(),
-  newContent: z.string(),
-});
-export type FileChange = z.infer<typeof FileChangeSchema>;
-
-/**
- * Coder output — mirrors root AGENTS.md §6.2.
- */
-export const PatchSubmissionSchema = z.object({
-  changes: z.array(FileChangeSchema).min(1),
-  commitMessage: z.string().min(1),
-  testsToRun: z.array(z.string()),
-  rationale: z.string().min(1),
-});
-export type PatchSubmission = z.infer<typeof PatchSubmissionSchema>;
-
-export const ValidationResultSchema = z.object({
-  runId: z.string(),
-  passed: z.boolean(),
-  lintPassed: z.boolean(),
-  typecheckPassed: z.boolean(),
-  testsPassed: z.boolean(),
-  testsToRun: z.array(z.string()),
-  output: z.string(),
-  durationMs: z.number().int().nonnegative(),
-});
-export type ValidationResult = z.infer<typeof ValidationResultSchema>;
-
-export const EscalationSchema = z.object({
-  reason: z.string().min(1),
-  lastError: z.string(),
-  suggestedNextStep: z.string().min(1),
-});
-export type Escalation = z.infer<typeof EscalationSchema>;
-
-/**
- * Agent service transport contract. The api orchestrates; the agent reasons.
- */
-export const PlanRequestSchema = z.object({
-  context: IssueContextSchema,
-});
-export type PlanRequest = z.infer<typeof PlanRequestSchema>;
-
-export const PlanResponseSchema = z.object({
-  plan: PlanBlueprintSchema,
-  model: z.string(),
-});
-export type PlanResponse = z.infer<typeof PlanResponseSchema>;
-
-export const CodeRequestSchema = z.object({
-  context: IssueContextSchema,
-  plan: PlanBlueprintSchema,
-  previousError: z.string().nullable().default(null),
-});
-export type CodeRequest = z.infer<typeof CodeRequestSchema>;
-
-export const CodeResponseSchema = z.object({
-  patch: PatchSubmissionSchema,
-  model: z.string(),
-});
-export type CodeResponse = z.infer<typeof CodeResponseSchema>;
-
-export const ValidateRequestSchema = z.object({
-  context: IssueContextSchema,
-  patch: PatchSubmissionSchema,
-});
-export type ValidateRequest = z.infer<typeof ValidateRequestSchema>;
 
 export const MAX_ATTEMPTS = 3;
 export const MAX_REPLANS = 1;
+
+export const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
+  QUEUED: ["PLANNING", "FAILED", "CANCELLED"],
+  // Self-loops are retries of the same stage (attempt + 1).
+  PLANNING: ["CODING", "PLANNING", "FAILED", "ESCALATED", "CANCELLED"],
+  CODING: [
+    "VALIDATING",
+    "CODING",
+    "PLANNING",
+    "FAILED",
+    "ESCALATED",
+    "CANCELLED",
+  ],
+  // A passing validation ends the compute run: shipping (Jira/GitHub writes)
+  // is a separate, human-confirmed step (design.md principle 3).
+  VALIDATING: [
+    "SUCCEEDED",
+    "VALIDATING",
+    "CODING",
+    "FAILED",
+    "ESCALATED",
+    "CANCELLED",
+  ],
+  // Kept for wire compatibility; no longer a pipeline stage.
+  OPENING_PR: ["SUCCEEDED", "OPENING_PR", "FAILED", "ESCALATED", "CANCELLED"],
+  SUCCEEDED: [],
+  FAILED: [],
+  ESCALATED: [],
+  CANCELLED: [],
+};
+
+export function canTransition(from: RunStatus, to: RunStatus): boolean {
+  return RUN_TRANSITIONS[from].includes(to);
+}
+
+export const runListQuerySchema = paginationQuerySchema.extend({
+  issueId: z.string().min(1).optional(),
+  status: runStatusSchema.optional(),
+});
+export type RunListQuery = z.infer<typeof runListQuerySchema>;
+
+export const planBlueprintSchema = z
+  .object({
+    rootCause: z.string().min(1),
+    filesToInspect: z.array(z.string().min(1)).min(1).max(15),
+    changeStrategy: z.string().min(1),
+    testsToRun: z.array(z.string().min(1)),
+    confidence: z.number().min(0).max(1),
+    needsMoreContext: z.boolean(),
+    missingContext: z.array(z.string().min(1)).optional(),
+  })
+  .refine(
+    (plan) => !plan.needsMoreContext || (plan.missingContext?.length ?? 0) > 0,
+    {
+      message:
+        "missingContext is required when needsMoreContext is true (AGENTS.md §6.1)",
+      path: ["missingContext"],
+    },
+  );
+export type PlanBlueprint = z.infer<typeof planBlueprintSchema>;
+
+export const patchSubmissionSchema = z.object({
+  changes: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        oldContent: z.string(),
+        newContent: z.string(),
+      }),
+    )
+    .min(1),
+  commitMessage: z.string().min(1),
+  testsToRun: z.array(z.string().min(1)),
+  rationale: z.string().min(1),
+});
+export type PatchSubmission = z.infer<typeof patchSubmissionSchema>;
+
+export const validationResultSchema = z.object({
+  status: z.enum(["PASSED", "FAILED", "ERRORED"]),
+  testsRun: z.array(z.string().min(1)),
+  lintPassed: z.boolean(),
+  typesPassed: z.boolean(),
+  output: z.string().max(65_536).default(""),
+  durationMs: z.number().int().min(0).optional(),
+});
+export type ValidationResult = z.infer<typeof validationResultSchema>;

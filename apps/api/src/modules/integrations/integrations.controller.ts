@@ -3,78 +3,96 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
   Query,
 } from "@nestjs/common";
-import {
-  ApiCreatedResponse,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from "@nestjs/swagger";
-import type { PaginationMeta } from "@repo/types";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 
-import { Scopes } from "../../common/decorators/scopes.decorator.ts";
-import { PaginationQueryDto } from "../../common/dto/pagination.dto.ts";
-import { RemovedResponseDto } from "../../common/dto/responses.ts";
 import {
-  CreateIntegrationDto,
-  IntegrationListResponseDto,
-  type IntegrationView,
-  IntegrationViewDto,
-  UpdateIntegrationDto,
-} from "./dto.ts";
+  CurrentPrincipal,
+  Roles,
+  Scopes,
+} from "../../common/auth/decorators.ts";
+import type { UserPrincipal } from "../../common/auth/principal.ts";
+import {
+  IntegrationCreateDto,
+  IntegrationUpdateDto,
+  PaginationQueryDto,
+} from "./integrations.dto.ts";
 import { IntegrationsService } from "./integrations.service.ts";
 
 @ApiTags("integrations")
-@Controller({ path: "integrations", version: "1" })
+@Controller("integrations")
+@Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class IntegrationsController {
   constructor(private readonly integrations: IntegrationsService) {}
 
+  @Post()
+  @Roles("OWNER", "ADMIN")
+  @Scopes("integrations:write")
+  @ApiOperation({
+    summary: "Connect a provider (secrets are encrypted at rest)",
+  })
+  create(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Body() dto: IntegrationCreateDto,
+  ) {
+    return this.integrations.create(principal.tenantId, dto);
+  }
+
   @Get()
   @Scopes("integrations:read")
-  @ApiOperation({ summary: "List integrations" })
-  @ApiOkResponse({ type: IntegrationListResponseDto })
+  @ApiOperation({ summary: "List integrations (secrets never returned)" })
   list(
+    @CurrentPrincipal() principal: UserPrincipal,
     @Query() query: PaginationQueryDto,
-  ): Promise<{ data: IntegrationView[]; pagination: PaginationMeta }> {
-    return this.integrations.list(query.page, query.limit);
+  ) {
+    return this.integrations.list(principal.tenantId, query.page, query.limit);
   }
 
   @Get(":id")
   @Scopes("integrations:read")
-  @ApiOperation({ summary: "Get an integration" })
-  @ApiOkResponse({ type: IntegrationViewDto })
-  get(@Param("id") id: string): Promise<IntegrationView> {
-    return this.integrations.get(id);
-  }
-
-  @Post()
-  @Scopes("integrations:write")
-  @ApiOperation({ summary: "Create an integration" })
-  @ApiCreatedResponse({ type: IntegrationViewDto })
-  create(@Body() dto: CreateIntegrationDto): Promise<IntegrationView> {
-    return this.integrations.create(dto);
+  @ApiOperation({ summary: "Fetch one integration" })
+  get(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.integrations.get(principal.tenantId, id);
   }
 
   @Patch(":id")
+  @Roles("OWNER", "ADMIN")
   @Scopes("integrations:write")
   @ApiOperation({ summary: "Update an integration" })
-  @ApiOkResponse({ type: IntegrationViewDto })
   update(
+    @CurrentPrincipal() principal: UserPrincipal,
     @Param("id") id: string,
-    @Body() dto: UpdateIntegrationDto,
-  ): Promise<IntegrationView> {
-    return this.integrations.update(id, dto);
+    @Body() dto: IntegrationUpdateDto,
+  ) {
+    return this.integrations.update(principal.tenantId, id, dto);
   }
 
   @Delete(":id")
+  @Roles("OWNER", "ADMIN")
   @Scopes("integrations:write")
-  @ApiOperation({ summary: "Delete an integration" })
-  @ApiOkResponse({ type: RemovedResponseDto })
-  remove(@Param("id") id: string): Promise<{ removed: boolean }> {
-    return this.integrations.remove(id);
+  @ApiOperation({ summary: "Disconnect an integration" })
+  remove(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.integrations.remove(principal.tenantId, id);
+  }
+
+  @Post(":id/scan")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Roles("OWNER", "ADMIN")
+  @Scopes("integrations:write")
+  @ApiOperation({
+    summary: "Scan a Jira source for existing items and import them",
+  })
+  scan(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.integrations.requestScan(principal.tenantId, id);
   }
 }

@@ -6,45 +6,85 @@ import {
   Post,
   Req,
 } from "@nestjs/common";
-import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { type WebhookAck, WebhookSourceSchema } from "@repo/types";
+import type { WebhookAccepted } from "@repo/types";
 import type { FastifyRequest } from "fastify";
 
-import { Public } from "../../common/decorators/public.decorator.ts";
-import { WebhookAckDto } from "./dto.ts";
-import { WebhooksService } from "./webhooks.service.ts";
+import { Public } from "../../common/auth/decorators.ts";
+import {
+  WebhookPipelineService,
+  type WebhookRequest,
+} from "./webhook-pipeline.service.ts";
 
-interface RawBodyRequest extends FastifyRequest {
-  rawBody?: Buffer;
+function toWebhookRequest(
+  request: FastifyRequest,
+  integrationId?: string,
+): WebhookRequest {
+  return {
+    rawBody: request.rawBody,
+    headers: request.headers as Record<string, string | string[] | undefined>,
+    body: request.body,
+    ...(integrationId ? { integrationId } : {}),
+  };
 }
 
 @ApiTags("webhooks")
 @Public()
-@Throttle({ default: { limit: 300, ttl: 60_000 } })
-@Controller({ path: "webhooks", version: "1" })
+@Controller("webhooks")
+@Throttle({ default: { limit: 120, ttl: 60_000 } })
 export class WebhooksController {
-  constructor(private readonly webhooks: WebhooksService) {}
+  constructor(private readonly pipeline: WebhookPipelineService) {}
 
-  @Post(":source/:integrationId")
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Receive a provider webhook" })
-  @ApiOkResponse({ type: WebhookAckDto })
-  handle(
-    @Param("source") source: string,
+  @Post("slack")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: "Slack Events API callback (v0 signature)" })
+  slack(@Req() request: FastifyRequest): Promise<WebhookAccepted> {
+    return this.pipeline.handle("SLACK", toWebhookRequest(request));
+  }
+
+  @Post("sentry")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: "Sentry issue alert webhook (HMAC signature)" })
+  sentry(@Req() request: FastifyRequest): Promise<WebhookAccepted> {
+    return this.pipeline.handle("SENTRY", toWebhookRequest(request));
+  }
+
+  @Post("github")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: "GitHub App webhook (X-Hub-Signature-256)" })
+  github(@Req() request: FastifyRequest): Promise<WebhookAccepted> {
+    return this.pipeline.handle("GITHUB", toWebhookRequest(request));
+  }
+
+  @Post("jira/:integrationId")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary: "Jira webhook (shared-secret header X-CodeBeast-Secret)",
+  })
+  jira(
+    @Req() request: FastifyRequest,
     @Param("integrationId") integrationId: string,
-    @Req() request: RawBodyRequest,
-  ): Promise<WebhookAck> {
-    const parsedSource = WebhookSourceSchema.parse(source);
-    const rawBody =
-      request.rawBody ?? Buffer.from(JSON.stringify(request.body ?? {}));
+  ): Promise<WebhookAccepted> {
+    return this.pipeline.handle(
+      "JIRA",
+      toWebhookRequest(request, integrationId),
+    );
+  }
 
-    return this.webhooks.handle(
-      parsedSource,
-      integrationId,
-      rawBody,
-      request.headers,
-      (request.body ?? {}) as Record<string, unknown>,
+  @Post("freshdesk/:integrationId")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary:
+      "Freshdesk conversation webhook (shared-secret header X-CodeBeast-Secret)",
+  })
+  freshdesk(
+    @Req() request: FastifyRequest,
+    @Param("integrationId") integrationId: string,
+  ): Promise<WebhookAccepted> {
+    return this.pipeline.handle(
+      "FRESHDESK",
+      toWebhookRequest(request, integrationId),
     );
   }
 }

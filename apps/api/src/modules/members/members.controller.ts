@@ -8,64 +8,67 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import {
-  ApiCreatedResponse,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from "@nestjs/swagger";
-import type { PaginationMeta } from "@repo/types";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 
-import { Roles } from "../../common/decorators/roles.decorator.ts";
-import { PaginationQueryDto } from "../../common/dto/pagination.dto.ts";
-import { RemovedResponseDto } from "../../common/dto/responses.ts";
 import {
-  CreateMemberDto,
-  MemberListResponseDto,
-  type MemberView,
-  MemberViewDto,
-  UpdateMemberDto,
-} from "./dto.ts";
+  CurrentPrincipal,
+  Roles,
+  Scopes,
+} from "../../common/auth/decorators.ts";
+import type { UserPrincipal } from "../../common/auth/principal.ts";
+import {
+  MemberInviteDto,
+  MemberUpdateDto,
+  PaginationQueryDto,
+} from "./members.dto.ts";
 import { MembersService } from "./members.service.ts";
 
 @ApiTags("members")
-@Controller({ path: "members", version: "1" })
+@Controller("members")
+@Roles("OWNER", "ADMIN", "MEMBER")
+@Throttle({ default: { limit: 30, ttl: 60_000 } })
 export class MembersController {
   constructor(private readonly members: MembersService) {}
 
   @Get()
+  @Scopes("members:read")
   @ApiOperation({ summary: "List tenant members" })
-  @ApiOkResponse({ type: MemberListResponseDto })
   list(
+    @CurrentPrincipal() principal: UserPrincipal,
     @Query() query: PaginationQueryDto,
-  ): Promise<{ data: MemberView[]; pagination: PaginationMeta }> {
-    return this.members.list(query.page, query.limit);
+  ) {
+    return this.members.list(principal.tenantId, query.page, query.limit);
   }
 
-  @Roles("OWNER", "ADMIN")
   @Post()
-  @ApiOperation({ summary: "Add a member to the tenant" })
-  @ApiCreatedResponse({ type: MemberViewDto })
-  create(@Body() dto: CreateMemberDto): Promise<MemberView> {
-    return this.members.create(dto);
+  @Roles("OWNER", "ADMIN")
+  @ApiOperation({ summary: "Add an existing account to the tenant" })
+  invite(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Body() dto: MemberInviteDto,
+  ) {
+    return this.members.invite(principal.tenantId, dto);
   }
 
-  @Roles("OWNER", "ADMIN")
   @Patch(":id")
-  @ApiOperation({ summary: "Update a member role" })
-  @ApiOkResponse({ type: MemberViewDto })
-  update(
+  @Roles("OWNER", "ADMIN")
+  @ApiOperation({ summary: "Change a member's role" })
+  updateRole(
+    @CurrentPrincipal() principal: UserPrincipal,
     @Param("id") id: string,
-    @Body() dto: UpdateMemberDto,
-  ): Promise<MemberView> {
-    return this.members.update(id, dto);
+    @Body() dto: MemberUpdateDto,
+  ) {
+    return this.members.updateRole(principal.tenantId, id, dto);
   }
 
-  @Roles("OWNER", "ADMIN")
   @Delete(":id")
-  @ApiOperation({ summary: "Remove a member" })
-  @ApiOkResponse({ type: RemovedResponseDto })
-  remove(@Param("id") id: string): Promise<{ removed: boolean }> {
-    return this.members.remove(id);
+  @Roles("OWNER", "ADMIN")
+  @ApiOperation({ summary: "Remove a member (last owner is protected)" })
+  remove(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.members.remove(principal.tenantId, id, principal.userId);
   }
 }

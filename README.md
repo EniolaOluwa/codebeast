@@ -10,11 +10,12 @@ every step has a check.
 
 ## What you get
 
-| Service       | URL                   | Notes                            |
-| ------------- | --------------------- | -------------------------------- |
-| Web (Next.js) | http://localhost:3000 | Landing page                     |
-| API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`        |
-| PostgreSQL    | localhost:5434        | Docker container, db `codebeast` |
+| Service       | URL                   | Notes                                   |
+| ------------- | --------------------- | --------------------------------------- |
+| Web (Next.js) | http://localhost:3000 | Landing + console (sign in at `/login`) |
+| API (NestJS)  | http://localhost:3001 | Swagger UI at `/api-docs`               |
+| PostgreSQL    | localhost:5434        | Docker container, db `codebeast`        |
+| Redis         | localhost:6379        | BullMQ queues (Docker container)        |
 
 ## External dependencies
 
@@ -71,32 +72,43 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/api-docs    # 200
 
 `apps/api/.env` (from `apps/api/.env.example`) — `DATABASE_URL` is required; the rest have defaults.
 
-| Variable       | Default       |
-| -------------- | ------------- |
-| `DATABASE_URL` | (required)    |
-| `PORT`         | `3001`        |
-| `HOST`         | `0.0.0.0`     |
-| `NODE_ENV`     | `development` |
-| `LOG_LEVEL`    | `info`        |
-| `CORS_ORIGIN`  | `*`           |
+| Variable                                                             | Default                               |
+| -------------------------------------------------------------------- | ------------------------------------- |
+| `DATABASE_URL`                                                       | (required)                            |
+| `PORT`                                                               | `3001`                                |
+| `HOST`                                                               | `0.0.0.0`                             |
+| `NODE_ENV`                                                           | `development`                         |
+| `LOG_LEVEL`                                                          | `info`                                |
+| `CORS_ORIGIN`                                                        | `*`                                   |
+| `JWT_SECRET`                                                         | dev-only (required in production)     |
+| `ENCRYPTION_KEY`                                                     | dev-only (required in production)     |
+| `AUTH_ACCESS_TTL_SECONDS`                                            | `900`                                 |
+| `AUTH_REFRESH_TTL_SECONDS`                                           | `1209600`                             |
+| `WEBHOOK_RAW_TTL_DAYS`                                               | `7`                                   |
+| `REDIS_URL`                                                          | `redis://localhost:6379`              |
+| `INGEST_COALESCE_MS`                                                 | `30000`                               |
+| `GITHUB_APP_ID`                                                      | (optional — stub client if unset)     |
+| `GITHUB_APP_PRIVATE_KEY_BASE64`                                      | (optional)                            |
+| `JIRA_CLIENT_MODE` / `DISCORD_CLIENT_MODE` / `FRESHDESK_CLIENT_MODE` | `stub` (set `api` for real providers) |
 
 `packages/db/.env` (from `packages/db/.env.example`) holds `DATABASE_URL` for the Prisma CLI (`db:migrate`, `db:studio`).
 
 ## Common scripts
 
-| Command            | Description                 |
-| ------------------ | --------------------------- |
-| `pnpm dev`         | Run api + web               |
-| `pnpm dev:full`    | Start postgres + api + web  |
-| `pnpm dev:down`    | Stop the postgres container |
-| `pnpm build`       | Build all apps              |
-| `pnpm lint`        | Lint all apps               |
-| `pnpm check-types` | Type-check all apps         |
-| `pnpm test`        | Run all tests               |
-| `pnpm db:generate` | Generate the Prisma client  |
-| `pnpm db:migrate`  | Apply migrations            |
-| `pnpm db:studio`   | Open Prisma Studio          |
-| `pnpm format`      | Format with Prettier        |
+| Command                          | Description                                                 |
+| -------------------------------- | ----------------------------------------------------------- |
+| `pnpm dev`                       | Run api + web                                               |
+| `pnpm dev:full`                  | Start postgres + api + web                                  |
+| `pnpm dev:down`                  | Stop the postgres container                                 |
+| `pnpm build`                     | Build all apps                                              |
+| `pnpm lint`                      | Lint all apps                                               |
+| `pnpm check-types`               | Type-check all apps                                         |
+| `pnpm test`                      | Run all tests                                               |
+| `pnpm db:generate`               | Generate the Prisma client                                  |
+| `pnpm db:migrate`                | Apply migrations                                            |
+| `pnpm db:studio`                 | Open Prisma Studio                                          |
+| `pnpm --filter @repo/db db:seed` | Seed the demo tenant (`demo@codebeast.dev` / `password123`) |
+| `pnpm format`                    | Format with Prettier                                        |
 
 ## Troubleshooting
 

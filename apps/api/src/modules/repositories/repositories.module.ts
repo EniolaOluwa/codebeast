@@ -6,6 +6,5 @@ import { RepositoriesService } from "./repositories.service.ts";
 @Module({
   controllers: [RepositoriesController],
   providers: [RepositoriesService],
-  exports: [RepositoriesService],
 })
 export class RepositoriesModule {}

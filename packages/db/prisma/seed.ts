@@ -1,51 +1,72 @@
-import { randomBytes, scryptSync } from "node:crypto";
+import { createPrismaClient } from "../src/client.ts";
 
-import "dotenv/config";
-
-import { prisma } from "../src/client.ts";
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString("hex");
-  const derived = scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${derived}`;
+// Node's built-in .env loader — avoids a dotenv dependency in this package.
+try {
+  process.loadEnvFile();
+} catch {
+  // No .env in the cwd; rely on the ambient environment.
 }
+
+/**
+ * Dev seed: one demo tenant, its owner, and one repository.
+ *
+ * Login: demo@codebeast.dev / password123.
+ *
+ * The hash below is scrypt (N=16384, r=8, p=1) in the exact format
+ * `apps/api`'s PasswordService produces and verifies; that test suite asserts
+ * this literal still verifies, so the format cannot drift silently.
+ */
+const DEMO_EMAIL = "demo@codebeast.dev";
+const DEMO_PASSWORD_HASH =
+  "scrypt$16384$8$1$UIdK59H69j2tQkrFZGUYQw$qcnuals9zP6wk-9NZfPD7GxXtIOxAKyfvXEhs5ZA4Lu3pgK2yqsNkOwEZryG1gaPQfWSnBx98dIRrscx-Gd4bw";
 
 async function main(): Promise<void> {
-  const tenant = await prisma.tenant.upsert({
-    where: { slug: "demo" },
-    update: {},
-    create: { name: "Demo", slug: "demo" },
-  });
+  const client = createPrismaClient(process.env.DATABASE_URL!);
 
-  const user = await prisma.user.upsert({
-    where: { email: "demo@codebeast.app" },
-    update: {},
-    create: {
-      email: "demo@codebeast.app",
-      name: "Demo User",
-      passwordHash: hashPassword("password123"),
-    },
-  });
+  try {
+    const user = await client.user.upsert({
+      where: { email: DEMO_EMAIL },
+      update: {},
+      create: {
+        email: DEMO_EMAIL,
+        name: "Demo Engineer",
+        passwordHash: DEMO_PASSWORD_HASH,
+      },
+    });
 
-  await prisma.membership.upsert({
-    where: { tenantId_userId: { tenantId: tenant.id, userId: user.id } },
-    update: { role: "OWNER" },
-    create: { tenantId: tenant.id, userId: user.id, role: "OWNER" },
-  });
+    const tenant = await client.tenant.upsert({
+      where: { slug: "demo" },
+      update: {},
+      create: { name: "Demo Co", slug: "demo" },
+    });
 
-  process.stdout.write(
-    `Seeded tenant=${tenant.slug} user=${user.email} password=password123\n`,
-  );
+    await client.membership.upsert({
+      where: { tenantId_userId: { tenantId: tenant.id, userId: user.id } },
+      update: { role: "OWNER" },
+      create: { tenantId: tenant.id, userId: user.id, role: "OWNER" },
+    });
+
+    await client.repository.upsert({
+      where: {
+        tenantId_fullName: {
+          tenantId: tenant.id,
+          fullName: "demo/codebeast-demo",
+        },
+      },
+      update: {},
+      create: {
+        tenantId: tenant.id,
+        name: "codebeast-demo",
+        fullName: "demo/codebeast-demo",
+      },
+    });
+
+    console.info(
+      `Seeded tenant '${tenant.slug}' (${tenant.id}) for ${user.email}`,
+    );
+  } finally {
+    await client.$disconnect();
+  }
 }
 
-main()
-  .then(async () => {
-    await prisma.$disconnect();
-  })
-  .catch(async (error: unknown) => {
-    process.stderr.write(
-      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
-    );
-    await prisma.$disconnect();
-    process.exit(1);
-  });
+await main();

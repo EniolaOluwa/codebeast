@@ -1,125 +1,106 @@
 import { z } from "zod";
 
-export const RoleSchema = z.enum(["OWNER", "ADMIN", "MEMBER", "VIEWER"]);
-export type Role = z.infer<typeof RoleSchema>;
+/**
+ * Shared enums for every wire contract. These mirror the Prisma enums in
+ * `packages/db/prisma/schema.prisma`; a parity test in `apps/api` fails if
+ * the two ever drift apart.
+ */
 
-export const ApiKeyScopeSchema = z.enum([
-  "issues:read",
-  "issues:write",
-  "runs:read",
-  "runs:write",
-  "repositories:read",
-  "repositories:write",
-  "integrations:read",
-  "integrations:write",
-  "audit:read",
-  "admin",
-]);
-export type ApiKeyScope = z.infer<typeof ApiKeyScopeSchema>;
-
-export const IntegrationTypeSchema = z.enum([
-  "SENTRY",
-  "JIRA",
-  "GITHUB",
+export const PROVIDERS = [
   "SLACK",
-]);
-export type IntegrationType = z.infer<typeof IntegrationTypeSchema>;
+  "SENTRY",
+  "GITHUB",
+  "JIRA",
+  "DISCORD",
+  "FRESHDESK",
+] as const;
+export const providerSchema = z.enum(PROVIDERS);
+export type Provider = z.infer<typeof providerSchema>;
 
-export const IntegrationStatusSchema = z.enum([
-  "CONNECTED",
-  "DISCONNECTED",
-  "ERROR",
-]);
-export type IntegrationStatus = z.infer<typeof IntegrationStatusSchema>;
+export const MEMBERSHIP_ROLES = ["OWNER", "ADMIN", "MEMBER"] as const;
+export const membershipRoleSchema = z.enum(MEMBERSHIP_ROLES);
+export type MembershipRole = z.infer<typeof membershipRoleSchema>;
 
-export const RepositoryProviderSchema = z.enum(["GITHUB", "GITLAB"]);
-export type RepositoryProvider = z.infer<typeof RepositoryProviderSchema>;
-
-export const IssueStatusSchema = z.enum([
+export const ISSUE_STATUSES = [
+  "NEW",
   "TRIAGED",
+  /** Computed and validated: awaiting a human (or rule) to ship it. */
+  "READY",
+  "RUNNING",
+  /** Shipped to Jira; the pull request may still be pending. */
+  "TICKETED",
+  "PR_OPENED",
+  "RESOLVED",
+  "IGNORED",
+  "FAILED",
+  "ESCALATED",
+] as const;
+export const issueStatusSchema = z.enum(ISSUE_STATUSES);
+export type IssueStatus = z.infer<typeof issueStatusSchema>;
+
+export const RUN_STATUSES = [
+  "QUEUED",
   "PLANNING",
   "CODING",
   "VALIDATING",
-  "PR_OPENED",
-  "RESOLVED",
-  "NEEDS_HUMAN",
-  "FAILED",
-  "IGNORED",
-]);
-export type IssueStatus = z.infer<typeof IssueStatusSchema>;
-
-export const IssueSeveritySchema = z.enum([
-  "LOW",
-  "MEDIUM",
-  "HIGH",
-  "CRITICAL",
-]);
-export type IssueSeverity = z.infer<typeof IssueSeveritySchema>;
-
-export const SignalKindSchema = z.enum([
-  "SENTRY_EVENT",
-  "CUSTOMER_MESSAGE",
-  "JIRA_TICKET",
-]);
-export type SignalKind = z.infer<typeof SignalKindSchema>;
-
-export const RunStatusSchema = z.enum([
-  "QUEUED",
-  "RUNNING",
+  "OPENING_PR",
   "SUCCEEDED",
   "FAILED",
   "ESCALATED",
   "CANCELLED",
-]);
-export type RunStatus = z.infer<typeof RunStatusSchema>;
+] as const;
+export const runStatusSchema = z.enum(RUN_STATUSES);
+export type RunStatus = z.infer<typeof runStatusSchema>;
 
-export const RunStageSchema = z.enum([
-  "PLANNING",
-  "CODING",
-  "VALIDATING",
-  "PR",
-]);
-export type RunStage = z.infer<typeof RunStageSchema>;
-
-export const ValidationStatusSchema = z.enum([
+export const PATCH_STATUSES = [
   "PENDING",
-  "PASSED",
+  "VALIDATED",
   "FAILED",
-  "ERROR",
-]);
-export type ValidationStatus = z.infer<typeof ValidationStatusSchema>;
+  "REJECTED",
+] as const;
+export const patchStatusSchema = z.enum(PATCH_STATUSES);
+export type PatchStatus = z.infer<typeof patchStatusSchema>;
 
-export const PullRequestStatusSchema = z.enum([
-  "DRAFT",
-  "OPEN",
-  "MERGED",
-  "CLOSED",
-]);
-export type PullRequestStatus = z.infer<typeof PullRequestStatusSchema>;
+export const VALIDATION_STATUSES = ["PASSED", "FAILED", "ERRORED"] as const;
+export const validationStatusSchema = z.enum(VALIDATION_STATUSES);
+export type ValidationStatus = z.infer<typeof validationStatusSchema>;
 
-export const WebhookSourceSchema = z.enum([
-  "SENTRY",
-  "JIRA",
-  "GITHUB",
-  "SLACK",
-]);
-export type WebhookSource = z.infer<typeof WebhookSourceSchema>;
+export const PULL_REQUEST_STATUSES = ["OPEN", "MERGED", "CLOSED"] as const;
+export const pullRequestStatusSchema = z.enum(PULL_REQUEST_STATUSES);
+export type PullRequestStatus = z.infer<typeof pullRequestStatusSchema>;
 
-export const WebhookEventStatusSchema = z.enum([
+export const WEBHOOK_STATUSES = [
   "RECEIVED",
   "PROCESSED",
+  "DUPLICATE",
+  "REJECTED",
   "FAILED",
-  "IGNORED",
-]);
-export type WebhookEventStatus = z.infer<typeof WebhookEventStatusSchema>;
+] as const;
+export const webhookStatusSchema = z.enum(WEBHOOK_STATUSES);
+export type WebhookStatus = z.infer<typeof webhookStatusSchema>;
 
-export const ActorTypeSchema = z.enum(["USER", "API_KEY", "SYSTEM"]);
-export type ActorType = z.infer<typeof ActorTypeSchema>;
+export const ACTOR_TYPES = ["USER", "API_KEY", "SYSTEM"] as const;
+export const actorTypeSchema = z.enum(ACTOR_TYPES);
+export type ActorType = z.infer<typeof actorTypeSchema>;
 
-export const RunOutcomeSchema = z.enum([
-  "SUCCEEDED",
-  "FAILED",
-  "NEEDS_HUMAN",
-  "ESCALATED",
-]);
-export type RunOutcome = z.infer<typeof RunOutcomeSchema>;
+export const RULE_KINDS = ["DETECTION", "AUTOMATION"] as const;
+export const ruleKindSchema = z.enum(RULE_KINDS);
+export type RuleKind = z.infer<typeof ruleKindSchema>;
+
+export const API_KEY_SCOPES = [
+  "repositories:read",
+  "repositories:write",
+  "integrations:read",
+  "integrations:write",
+  "issues:read",
+  "issues:write",
+  "runs:read",
+  "runs:write",
+  "members:read",
+  "overview:read",
+  "rules:read",
+  "rules:write",
+  "audit:read",
+] as const;
+export const apiKeyScopeSchema = z.enum(API_KEY_SCOPES);
+export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>;

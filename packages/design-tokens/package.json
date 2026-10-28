@@ -1,0 +1,17 @@
+{
+  "name": "@repo/design-tokens",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "main": "./tokens.json",
+  "exports": {
+    "./tokens.css": "./tokens.css",
+    "./theme.css": "./theme.css",
+    "./tokens.json": "./tokens.json"
+  },
+  "files": [
+    "tokens.css",
+    "theme.css",
+    "tokens.json"
+  ]
+}

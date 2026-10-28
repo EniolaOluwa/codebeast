@@ -14,7 +14,11 @@ export default defineConfig({
   ],
   test: {
     globals: true,
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    testTimeout: 60_000,
+    // Integration suites start several containers in parallel; give the
+    // Docker VM room under load.
+    hookTimeout: 240_000,
     env: {
       DATABASE_URL: "postgresql://test:test@localhost:5432/test",
       NODE_ENV: "test",

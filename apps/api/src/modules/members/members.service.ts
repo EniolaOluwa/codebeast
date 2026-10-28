@@ -1,121 +1,181 @@
 import { Injectable } from "@nestjs/common";
-import type { PaginationMeta } from "@repo/types";
+import type { Prisma } from "@repo/db";
+import type {
+  MemberInviteInput,
+  MembershipRole,
+  MemberUpdateInput,
+} from "@repo/types";
 
-import { TenantContext } from "../../common/context/tenant-context.ts";
-import { ConflictError, NotFoundError } from "../../common/errors/errors.ts";
-import { paginationMeta } from "../../common/pagination/pagination.ts";
+import {
+  ConflictError,
+  NotFoundError,
+  ValidationError,
+} from "../../common/errors/errors.ts";
+import { paginated, skipTake } from "../../common/pagination.ts";
+import { isUniqueViolation } from "../../common/prisma-errors.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
-import type { CreateMemberDto, MemberView, UpdateMemberDto } from "./dto.ts";
+
+export interface MemberView {
+  id: string;
+  userId: string;
+  email: string;
+  name: string | null;
+  role: MembershipRole;
+  createdAt: string;
+}
+
+interface MemberRow {
+  id: string;
+  userId: string;
+  role: MembershipRole;
+  createdAt: Date;
+  user: { email: string; name: string | null };
+}
+
+function toMember(row: MemberRow): MemberView {
+  return {
+    id: row.id,
+    userId: row.userId,
+    email: row.user.email,
+    name: row.user.name,
+    role: row.role,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 @Injectable()
 export class MembersService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly tenantContext: TenantContext,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async list(
-    page: number,
-    limit: number,
-  ): Promise<{ data: MemberView[]; pagination: PaginationMeta }> {
-    const result = await this.prisma.withTenant(async (tx) => {
-      const [rows, total] = await Promise.all([
+  async list(tenantId: string, page: number, limit: number) {
+    const { skip, take } = skipTake(page, limit);
+
+    const [rows, total] = await this.prisma.withTenant(tenantId, (tx) =>
+      Promise.all([
         tx.membership.findMany({
-          include: { user: true },
+          where: { tenantId },
           orderBy: { createdAt: "asc" },
-          skip: (page - 1) * limit,
-          take: limit,
+          skip,
+          take,
+          include: { user: { select: { email: true, name: true } } },
         }),
-        tx.membership.count(),
-      ]);
+        tx.membership.count({ where: { tenantId } }),
+      ]),
+    );
 
-      return {
-        rows,
-        total,
-      };
-    });
-
-    return {
-      data: result.rows.map((row) => ({
-        id: row.id,
-        userId: row.userId,
-        email: row.user.email,
-        name: row.user.name,
-        role: row.role,
-        createdAt: row.createdAt,
-      })),
-      pagination: paginationMeta(page, limit, result.total),
-    };
+    return paginated(
+      rows.map((row) => toMember(row)),
+      page,
+      limit,
+      total,
+    );
   }
 
-  async create(dto: CreateMemberDto): Promise<MemberView> {
-    const email = dto.email.toLowerCase();
-    const tenantId = this.tenantContext.requireTenantId();
+  /** Invitations are limited to accounts that already exist (they register first). */
+  async invite(
+    tenantId: string,
+    input: MemberInviteInput,
+  ): Promise<MemberView> {
+    const user = await this.prisma.client.user.findUnique({
+      where: { email: input.email },
+      select: { id: true, email: true, name: true },
+    });
 
-    const user =
-      (await this.prisma.client.user.findUnique({ where: { email } })) ??
-      (await this.prisma.client.user.create({
-        data: { email, name: dto.name ?? null },
-      }));
+    if (!user) {
+      throw new ValidationError(
+        "No account exists for this email — ask them to register first",
+      );
+    }
 
-    const membership = await this.prisma.withTenant(async (tx) => {
-      const existing = await tx.membership.findUnique({
-        where: { tenantId_userId: { tenantId, userId: user.id } },
-      });
-      if (existing) {
-        throw new ConflictError("Member");
+    try {
+      const row = await this.prisma.withTenant(tenantId, (tx) =>
+        tx.membership.create({
+          data: { tenantId, userId: user.id, role: input.role },
+          include: { user: { select: { email: true, name: true } } },
+        }),
+      );
+
+      return toMember(row);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new ConflictError("This user is already a member");
       }
-
-      return tx.membership.create({
-        data: { tenantId, userId: user.id, role: dto.role },
-      });
-    });
-
-    return {
-      id: membership.id,
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      role: membership.role,
-      createdAt: membership.createdAt,
-    };
+      throw error;
+    }
   }
 
-  async update(id: string, dto: UpdateMemberDto): Promise<MemberView> {
-    const membership = await this.prisma.withTenant(async (tx) => {
-      const existing = await tx.membership.findUnique({
-        where: { id },
-        include: { user: true },
+  async updateRole(
+    tenantId: string,
+    membershipId: string,
+    input: MemberUpdateInput,
+  ): Promise<MemberView> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const target = await tx.membership.findFirst({
+        where: { id: membershipId, tenantId },
+        include: { user: { select: { email: true, name: true } } },
       });
-      if (!existing) {
+
+      if (!target) {
         throw new NotFoundError("Member");
       }
-      return tx.membership.update({
-        where: { id },
-        data: { role: dto.role },
-        include: { user: true },
-      });
-    });
 
-    return {
-      id: membership.id,
-      userId: membership.userId,
-      email: membership.user.email,
-      name: membership.user.name,
-      role: membership.role,
-      createdAt: membership.createdAt,
-    };
+      if (target.role === "OWNER" && input.role !== "OWNER") {
+        await this.assertAnotherOwnerRemains(tx, tenantId, target.id);
+      }
+
+      const updated = await tx.membership.update({
+        where: { id: target.id },
+        data: { role: input.role },
+        include: { user: { select: { email: true, name: true } } },
+      });
+
+      return toMember(updated);
+    });
   }
 
-  async remove(id: string): Promise<{ removed: boolean }> {
-    await this.prisma.withTenant(async (tx) => {
-      const existing = await tx.membership.findUnique({ where: { id } });
-      if (!existing) {
+  async remove(
+    tenantId: string,
+    membershipId: string,
+    actingUserId: string,
+  ): Promise<{ success: true }> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const target = await tx.membership.findFirst({
+        where: { id: membershipId, tenantId },
+        select: { id: true, userId: true, role: true },
+      });
+
+      if (!target) {
         throw new NotFoundError("Member");
       }
-      await tx.membership.delete({ where: { id } });
+
+      if (target.userId === actingUserId) {
+        throw new ValidationError("Members cannot remove themselves");
+      }
+
+      if (target.role === "OWNER") {
+        await this.assertAnotherOwnerRemains(tx, tenantId, target.id);
+      }
+
+      await tx.membership.delete({ where: { id: target.id } });
+      return { success: true };
+    });
+  }
+
+  private async assertAnotherOwnerRemains(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    excludingMembershipId: string,
+  ): Promise<void> {
+    const owners = await tx.membership.count({
+      where: {
+        tenantId,
+        role: "OWNER",
+        id: { not: excludingMembershipId },
+      },
     });
 
-    return { removed: true };
+    if (owners === 0) {
+      throw new ValidationError("The last owner cannot be removed or demoted");
+    }
   }
 }

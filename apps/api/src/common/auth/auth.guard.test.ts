@@ -1,166 +1,242 @@
-import type { ExecutionContext } from "@nestjs/common";
-import type { Reflector } from "@nestjs/core";
-import { describe, expect, it, vi } from "vitest";
+import "reflect-metadata";
 
-import type { PrismaService } from "../../prisma/prisma.service.ts";
-import { generateApiKey } from "./api-key.ts";
+import { randomBytes } from "node:crypto";
+
+import { Controller, Get } from "@nestjs/common";
+import type { ConfigService } from "@nestjs/config";
+import { APP_GUARD } from "@nestjs/core";
+import {
+  FastifyAdapter,
+  type NestFastifyApplication,
+} from "@nestjs/platform-fastify";
+import { Test } from "@nestjs/testing";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import { PrismaService } from "../../prisma/prisma.service.ts";
+import { CryptoService } from "../crypto/crypto.service.ts";
 import { AuthGuard } from "./auth.guard.ts";
-import type { JwtService } from "./jwt.service.ts";
+import { CurrentPrincipal, Public, Roles, Scopes } from "./decorators.ts";
+import type { Principal } from "./principal.ts";
+import { TokenService } from "./token.service.ts";
 
-type Metadata = Record<string, unknown>;
+const values: Record<string, unknown> = {
+  ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+  JWT_SECRET: "s".repeat(32),
+  AUTH_ACCESS_TTL_SECONDS: 900,
+  AUTH_REFRESH_TTL_SECONDS: 1_209_600,
+};
 
-function makeContext(headers: Record<string, string | undefined>) {
-  const request = { headers };
-  const context = {
-    switchToHttp: () => ({ getRequest: () => request }),
-    getHandler: () => ({}),
-    getClass: () => class {},
-  } as unknown as ExecutionContext;
-  return { context, request: request as typeof request & { auth?: unknown } };
-}
+const config = {
+  getOrThrow: (key: string): unknown => values[key],
+} as unknown as ConfigService;
 
-function makeGuard(
-  meta: Metadata,
-  options: {
-    jwtPayload?: Record<string, unknown>;
-    apiKeyRecord?: Record<string, unknown> | null;
-  } = {},
-): AuthGuard {
-  const reflector = {
-    getAllAndOverride: (key: string) => meta[key],
-  } as unknown as Reflector;
+const crypto = new CryptoService(config);
+const tokens = new TokenService(config);
 
-  const jwt = {
-    verify: () => options.jwtPayload,
-  } as unknown as JwtService;
+@Controller("probe")
+class ProbeController {
+  @Get("open")
+  @Public()
+  open(): { ok: true } {
+    return { ok: true };
+  }
 
-  const prisma = {
-    client: {
-      apiKey: {
-        findFirst: vi.fn().mockResolvedValue(options.apiKeyRecord ?? null),
-        update: vi.fn().mockResolvedValue(undefined),
-      },
-    },
-  } as unknown as PrismaService;
+  @Get("whoami")
+  whoami(@CurrentPrincipal() principal: Principal): Principal {
+    return principal;
+  }
 
-  return new AuthGuard(reflector, jwt, prisma);
+  @Get("owner")
+  @Roles("OWNER")
+  owner(): { ok: true } {
+    return { ok: true };
+  }
+
+  @Get("scoped")
+  @Scopes("issues:read")
+  scoped(): { ok: true } {
+    return { ok: true };
+  }
+
+  @Get("both")
+  @Roles("ADMIN")
+  @Scopes("issues:read")
+  both(): { ok: true } {
+    return { ok: true };
+  }
 }
 
 describe("AuthGuard", () => {
-  it("allows @Public routes without credentials", async () => {
-    const guard = makeGuard({ isPublic: true });
-    const { context } = makeContext({});
-    await expect(guard.canActivate(context)).resolves.toBe(true);
-  });
+  let app: NestFastifyApplication;
 
-  it("rejects requests without credentials", async () => {
-    const guard = makeGuard({});
-    const { context } = makeContext({});
-    await expect(guard.canActivate(context)).rejects.toThrow(/Unauthorized/);
-  });
+  const prisma = {
+    client: { user: { findUnique: vi.fn() } },
+    withRls: vi.fn(),
+    withTenant: vi.fn(async (): Promise<undefined> => undefined),
+  };
 
-  it("attaches tenant context for a valid JWT", async () => {
-    const guard = makeGuard(
-      {},
-      {
-        jwtPayload: {
-          sub: "user-1",
-          tid: "tenant-1",
-          role: "MEMBER",
-        },
-      },
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      controllers: [ProbeController],
+      providers: [
+        { provide: APP_GUARD, useClass: AuthGuard },
+        { provide: PrismaService, useValue: prisma },
+        { provide: TokenService, useValue: tokens },
+        { provide: CryptoService, useValue: crypto },
+      ],
+    }).compile();
+
+    app = moduleRef.createNestApplication<NestFastifyApplication>(
+      new FastifyAdapter(),
     );
-    const { context, request } = makeContext({
-      authorization: "Bearer token",
+    await app.init();
+    await app.getHttpAdapter().getInstance().ready();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const inject = (url: string, headers: Record<string, string> = {}) =>
+    app.inject({ method: "GET", url, headers });
+
+  function stubUser(role: "OWNER" | "ADMIN" | "MEMBER"): string {
+    prisma.withRls.mockImplementation(
+      async (_context, fn: (tx: unknown) => unknown) =>
+        fn({ membership: { findUnique: async () => ({ role }) } }),
+    );
+    prisma.client.user.findUnique.mockResolvedValue({
+      email: "user@example.com",
     });
 
-    await guard.canActivate(context);
-    expect(request.auth).toMatchObject({
-      tenantId: "tenant-1",
-      actorType: "USER",
-      actorId: "user-1",
+    return tokens.signAccessToken({ userId: "user_1", tenantId: "tenant_1" })
+      .token;
+  }
+
+  function stubApiKey(scopes: string[], revoked = false): string {
+    const raw = `cb_live_${randomBytes(4).toString("hex")}_${crypto.randomToken(16)}`;
+
+    prisma.withRls.mockImplementation(
+      async (_context, fn: (tx: unknown) => unknown) =>
+        fn({
+          apiKey: {
+            findUnique: async () => ({
+              id: "key_1",
+              tenantId: "tenant_1",
+              keyHash: crypto.hash(raw),
+              scopes,
+              revokedAt: revoked ? new Date() : null,
+            }),
+          },
+        }),
+    );
+
+    return raw;
+  }
+
+  it("lets public routes through without credentials", async () => {
+    expect((await inject("/probe/open")).statusCode).toBe(200);
+  });
+
+  it("401s without or with malformed credentials", async () => {
+    expect((await inject("/probe/whoami")).statusCode).toBe(401);
+    expect(
+      (
+        await inject("/probe/whoami", {
+          authorization: "Bearer garbage",
+        })
+      ).statusCode,
+    ).toBe(401);
+  });
+
+  it("attaches a user principal resolved from membership", async () => {
+    const token = stubUser("MEMBER");
+
+    const res = await inject("/probe/whoami", {
+      authorization: `Bearer ${token}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      type: "user",
+      userId: "user_1",
+      tenantId: "tenant_1",
       role: "MEMBER",
     });
   });
 
-  it("enforces @Roles for user actors", async () => {
-    const guard = makeGuard(
-      { roles: ["ADMIN"] },
-      { jwtPayload: { sub: "u", tid: "t", role: "VIEWER" } },
-    );
-    const { context } = makeContext({ authorization: "Bearer token" });
+  it("enforces @Roles for user sessions", async () => {
+    const token = stubUser("MEMBER");
+    const auth = { authorization: `Bearer ${token}` };
 
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      /Insufficient role/,
-    );
+    expect((await inject("/probe/owner", auth)).statusCode).toBe(403);
+
+    stubUser("OWNER");
+    expect((await inject("/probe/owner", auth)).statusCode).toBe(200);
   });
 
-  it("authenticates a valid API key", async () => {
-    const generated = generateApiKey();
-    const guard = makeGuard(
-      {},
-      {
-        apiKeyRecord: {
-          id: "key-1",
-          tenantId: "tenant-1",
-          prefix: generated.prefix,
-          keyHash: generated.keyHash,
-          scopes: ["issues:read"],
-          expiresAt: null,
-        },
-      },
-    );
-    const { context, request } = makeContext({
-      "x-api-key": generated.fullKey,
-    });
+  it("lets users (role-gated) past @Scopes but requires scopes from API keys", async () => {
+    const raw = stubApiKey(["issues:read"]);
 
-    await guard.canActivate(context);
-    expect(request.auth).toMatchObject({
-      tenantId: "tenant-1",
-      actorType: "API_KEY",
-      actorId: "key-1",
-    });
+    expect(
+      (await inject("/probe/scoped", { authorization: `Bearer ${raw}` }))
+        .statusCode,
+    ).toBe(200);
+
+    // @Roles without @Scopes denies API keys by default.
+    expect(
+      (await inject("/probe/owner", { authorization: `Bearer ${raw}` }))
+        .statusCode,
+    ).toBe(403);
+
+    // Both annotations: scope check applies to the key.
+    expect(
+      (await inject("/probe/both", { authorization: `Bearer ${raw}` }))
+        .statusCode,
+    ).toBe(200);
   });
 
-  it("rejects an API key missing a required scope", async () => {
-    const generated = generateApiKey();
-    const guard = makeGuard(
-      { scopes: ["issues:write"] },
-      {
-        apiKeyRecord: {
-          id: "key-1",
-          tenantId: "tenant-1",
-          prefix: generated.prefix,
-          keyHash: generated.keyHash,
-          scopes: ["issues:read"],
-          expiresAt: null,
-        },
-      },
-    );
-    const { context } = makeContext({ "x-api-key": generated.fullKey });
+  it("403s API keys missing the required scope", async () => {
+    const raw = stubApiKey(["repositories:read"]);
 
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      /missing required scope/,
-    );
+    expect(
+      (await inject("/probe/scoped", { authorization: `Bearer ${raw}` }))
+        .statusCode,
+    ).toBe(403);
   });
 
-  it("rejects an invalid API key secret", async () => {
-    const generated = generateApiKey();
-    const guard = makeGuard(
-      {},
-      {
-        apiKeyRecord: {
-          id: "key-1",
-          tenantId: "tenant-1",
-          prefix: generated.prefix,
-          keyHash: "different-hash",
-          scopes: [],
-          expiresAt: null,
-        },
-      },
-    );
-    const { context } = makeContext({ "x-api-key": generated.fullKey });
+  it("401s revoked keys and keys presented with a wrong secret", async () => {
+    const revoked = stubApiKey(["issues:read"], true);
+    expect(
+      (await inject("/probe/scoped", { authorization: `Bearer ${revoked}` }))
+        .statusCode,
+    ).toBe(401);
 
-    await expect(guard.canActivate(context)).rejects.toThrow(/Unauthorized/);
+    const raw = stubApiKey(["issues:read"]);
+    const tampered = `${raw.split("_").slice(0, 2).join("_")}_wrongsecret`;
+    expect(
+      (await inject("/probe/scoped", { authorization: `Bearer ${tampered}` }))
+        .statusCode,
+    ).toBe(401);
+  });
+
+  it("touches lastUsedAt on successful API key auth", async () => {
+    const raw = stubApiKey(["issues:read"]);
+
+    await inject("/probe/scoped", { authorization: `Bearer ${raw}` });
+
+    expect(prisma.withTenant).toHaveBeenCalledOnce();
   });
 });

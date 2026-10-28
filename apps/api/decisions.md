@@ -84,33 +84,37 @@ rather than rewrite. Status: `Accepted`, `Superseded`, `Proposed`.
 - **Consequences:** Adds `testcontainers` + `@testcontainers/*` dev deps; slower but
   deterministic and isolated.
 
-## ADR-009 — One pipeline queue, stage transitions inside the runner
-
-- **Status:** Accepted (supersedes the six-queue list in ADR-004)
-- **Context:** The MVP has a single linear plan → code ⇄ validate → PR flow. Splitting
-  it across six queues adds routing and partial-failure complexity before there is load.
-- **Decision:** Use one BullMQ queue (`pipeline`) that runs `PipelineRunner`. The runner
-  persists `Run.stage` between steps, and jobs are idempotent by `runId`.
-- **Consequences:** Simple retry/backoff and one worker pool. If stages need independent
-  scaling later, split them without changing the persisted state machine.
-
-## ADR-010 — Manual GitHub REST client instead of `@octokit/auth-app`
-
-- **Status:** Accepted (refines ADR-005)
-- **Context:** The MVP needs App JWT → installation token → branch/commit/PR. Octokit
-  adds dependencies for a small, well-documented REST surface.
-- **Decision:** Implement the flow with `fetch` and `node:crypto` in
-  `src/clients/github.client.ts`; sign RS256 App JWTs and cache installation tokens in
-  memory until near expiry.
-- **Consequences:** No new runtime dependency. The client must be revisited if GitHub
-  changes the flow or if we need webhook/checks APIs.
-
-## ADR-011 — `scrypt` password hashing, no native dependency
+## ADR-009 — RLS policies read per-transaction GUC "claims"
 
 - **Status:** Accepted
-- **Context:** Password auth needs a memory-hard KDF; `bcrypt`/`argon2` require native
-  builds that complicate Docker and edge deploys.
-- **Decision:** Use Node's `crypto.scrypt` with a random 16-byte salt and store
-  `scrypt$N$r$p$salt$hash` (timing-safe compare).
-- **Consequences:** No native modules. Parameters are embedded in each hash, so they can
-  be upgraded without invalidating existing credentials.
+- **Context:** Auth-time lookups (API key by prefix, refresh token by hash, membership by
+  user) and webhook tenant resolution happen before a tenant is known. A blanket
+  `tenant_id = current_setting('app.current_tenant')` policy would make those paths
+  impossible; disabling RLS on credential tables would remove the backstop.
+- **Decision:** Every tenant-scoped table is FORCE RLS. Policies grant the standard
+  tenant check plus, on credential/routing tables, a single-row "claim" lookup keyed by
+  a GUC that `PrismaService.withRls` sets transaction-locally:
+  `app.current_user` (Membership), `app.current_api_key_prefix` (ApiKey),
+  `app.current_refresh_token_hash` and `app.current_user` (RefreshToken — hash claim for
+  lookups, user claim so reuse detection can revoke the whole family),
+  `app.current_integration_external_id` / `app.current_integration_id` (Integration).
+  Unset GUCs read as NULL, so every policy fails closed.
+- **Consequences:** Credential lookups must go through `withRls` with the matching
+  claim; plain queries see nothing. `WITH CHECK` still requires the acting tenant, so a
+  claim can never write across tenants. Dev Postgres (superuser) bypasses RLS —
+  isolation tests must use `codebeast_app` (see `errors.md` E-002).
+
+## ADR-012 — Signals carry semantic provider ids; deliveries key events
+
+- **Status:** Accepted
+- **Context:** The webhook pipeline overwrote `IssueSignal.externalId` with the
+  delivery id (or payload hash) while the scan path stored the provider's semantic id
+  (Jira key, Freshdesk ticket id). The two ingestion paths disagreed and could not
+  dedupe the same item ingested both ways (found by the Phase 7 e2e).
+- **Decision:** `WebhookEvent.externalId` keeps the delivery id (event replay dedupe);
+  `IssueSignal.externalId` always carries the normalizer's semantic id. The unique
+  `(tenantId, provider, externalId)` therefore dedupes one item across webhook and scan
+  ingestion.
+- **Consequences:** Repeat deliveries of the same semantic item do not increment
+  `signalCount` (one signal per item per provider); delivery-level history lives on
+  `WebhookEvent`.

@@ -9,98 +9,75 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
+// ---------------------------------------------------------------------------
+// Enums — mirrored by zod enums in `@repo/types` (parity tested in apps/api).
+// ---------------------------------------------------------------------------
+
+enum MembershipRole {
   OWNER
   ADMIN
   MEMBER
-  VIEWER
 }
 
-enum IntegrationType {
-  SENTRY
-  JIRA
-  GITHUB
+enum Provider {
   SLACK
-}
-
-enum IntegrationStatus {
-  CONNECTED
-  DISCONNECTED
-  ERROR
-}
-
-enum RepositoryProvider {
+  SENTRY
   GITHUB
-  GITLAB
+  JIRA
+  DISCORD
+  FRESHDESK
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  DUPLICATE
+  REJECTED
+  FAILED
 }
 
 enum IssueStatus {
+  NEW
   TRIAGED
-  PLANNING
-  CODING
-  VALIDATING
+  READY
+  RUNNING
+  TICKETED
   PR_OPENED
   RESOLVED
-  NEEDS_HUMAN
-  FAILED
   IGNORED
-}
-
-enum IssueSeverity {
-  LOW
-  MEDIUM
-  HIGH
-  CRITICAL
-}
-
-enum SignalKind {
-  SENTRY_EVENT
-  CUSTOMER_MESSAGE
-  JIRA_TICKET
+  FAILED
+  ESCALATED
 }
 
 enum RunStatus {
   QUEUED
-  RUNNING
+  PLANNING
+  CODING
+  VALIDATING
+  OPENING_PR
   SUCCEEDED
   FAILED
   ESCALATED
   CANCELLED
 }
 
-enum RunStage {
-  PLANNING
-  CODING
-  VALIDATING
-  PR
+enum PatchStatus {
+  PENDING
+  VALIDATED
+  FAILED
+  REJECTED
 }
 
 enum ValidationStatus {
-  PENDING
   PASSED
   FAILED
-  ERROR
+  ERRORED
 }
 
 enum PullRequestStatus {
-  DRAFT
   OPEN
   MERGED
   CLOSED
-}
-
-enum WebhookSource {
-  SENTRY
-  JIRA
-  GITHUB
-  SLACK
-}
-
-enum WebhookEventStatus {
-  RECEIVED
-  PROCESSED
-  FAILED
-  IGNORED
 }
 
 enum ActorType {
@@ -109,266 +86,280 @@ enum ActorType {
   SYSTEM
 }
 
-model Tenant {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  slug      String   @unique
-  plan      String   @default("free")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  memberships         Membership[]
-  apiKeys             ApiKey[]
-  refreshTokens       RefreshToken[]
-  repositories        Repository[]
-  integrations        Integration[]
-  githubInstallations GitHubInstallation[]
-  slackWorkspaces     SlackWorkspace[]
-  webhookEvents       WebhookEvent[]
-  issues              Issue[]
-  issueSignals        IssueSignal[]
-  runs                Run[]
-  plans               Plan[]
-  patches             Patch[]
-  fileChanges         FileChange[]
-  validationRuns      ValidationRun[]
-  pullRequests        PullRequest[]
-  auditLogs           AuditLog[]
+enum RuleKind {
+  DETECTION
+  AUTOMATION
 }
 
-model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String?
-  passwordHash String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
 
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  name          String?
+  passwordHash  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
   memberships   Membership[]
   refreshTokens RefreshToken[]
 }
 
-model Membership {
-  id        String   @id @default(cuid())
-  tenantId  String   @db.Uuid
-  userId    String
-  role      Role     @default(MEMBER)
-  createdAt DateTime @default(now())
+model Tenant {
+  id                 String              @id @default(cuid())
+  name               String
+  slug               String              @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  memberships        Membership[]
+  apiKeys            ApiKey[]
+  refreshTokens      RefreshToken[]
+  repositories       Repository[]
+  integrations       Integration[]
+  githubInstallation GitHubInstallation?
+  slackWorkspace     SlackWorkspace?
+  webhookEvents      WebhookEvent[]
+  issues             Issue[]
+  tickets            Ticket[]
+  issueSignals       IssueSignal[]
+  runs               Run[]
+  plans              Plan[]
+  patches            Patch[]
+  fileChanges        FileChange[]
+  validationRuns     ValidationRun[]
+  pullRequests       PullRequest[]
+  rules              Rule[]
+  auditLogs          AuditLog[]
+}
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+model Membership {
+  id        String         @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      MembershipRole @default(MEMBER)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
+  user      User           @relation(fields: [userId], references: [id])
 
   @@unique([tenantId, userId])
   @@index([userId])
 }
 
 model ApiKey {
-  id          String    @id @default(cuid())
-  tenantId    String    @db.Uuid
-  name        String
-  prefix      String    @unique
-  keyHash     String    @unique
-  scopes      String[]
-  lastUsedAt  DateTime?
-  expiresAt   DateTime?
-  revokedAt   DateTime?
-  createdById String?
-  createdAt   DateTime  @default(now())
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id         String    @id @default(cuid())
+  tenantId   String
+  name       String
+  prefix     String    @unique
+  keyHash    String
+  scopes     String[]
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
 }
 
 model RefreshToken {
-  id        String    @id @default(cuid())
-  tenantId  String    @db.Uuid
-  userId    String
-  tokenHash String    @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  userAgent String?
-  ip        String?
-  createdAt DateTime  @default(now())
+  id           String    @id @default(cuid())
+  tenantId     String
+  userId       String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+  tenant       Tenant    @relation(fields: [tenantId], references: [id])
+  user         User      @relation(fields: [userId], references: [id])
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
   @@index([userId])
 }
 
-model Repository {
-  id             String             @id @default(cuid())
-  tenantId       String             @db.Uuid
-  provider       RepositoryProvider @default(GITHUB)
-  externalId     String
-  fullName       String
-  defaultBranch  String             @default("main")
-  installationId String?
-  isActive       Boolean            @default(true)
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
+// ---------------------------------------------------------------------------
+// Ingestion
+// ---------------------------------------------------------------------------
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+model Repository {
+  id            String        @id @default(cuid())
+  tenantId      String
+  name          String
+  fullName      String
+  defaultBranch String        @default("main")
+  githubRepoId  Int?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  integrations  Integration[]
   issues        Issue[]
   pullRequests  PullRequest[]
-  integrations  Integration[]
 
   @@unique([tenantId, fullName])
   @@index([tenantId])
 }
 
 model Integration {
-  id                String            @id @default(cuid())
-  tenantId          String            @db.Uuid
-  type              IntegrationType
-  status            IntegrationStatus @default(CONNECTED)
-  name              String
-  config            Json              @default("{}")
-  secretEncrypted   String?
-  externalAccountId String?
-  repositoryId      String?
-  createdById       String?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  id           String      @id @default(cuid())
+  tenantId     String
+  type         Provider
+  name         String
+  externalId   String?
+  config       Json        @default("{}")
+  secrets      String?
+  enabled      Boolean     @default(true)
+  repositoryId String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  tenant       Tenant      @relation(fields: [tenantId], references: [id])
+  repository   Repository? @relation(fields: [repositoryId], references: [id])
 
-  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  repository     Repository?    @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
-  webhookEvents  WebhookEvent[]
-
-  @@unique([tenantId, type, externalAccountId])
+  @@unique([tenantId, type, name])
+  @@unique([type, externalId])
   @@index([tenantId])
 }
 
 model GitHubInstallation {
-  id                 String   @id @default(cuid())
-  tenantId           String   @db.Uuid
-  installationId     String   @unique
-  accountLogin       String
-  accountType        String
-  repositorySelection String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
+  id             String    @id @default(cuid())
+  tenantId       String    @unique
+  installationId Int       @unique
+  accountLogin   String
+  accountType    String
+  suspendedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  tenant         Tenant    @relation(fields: [tenantId], references: [id])
 }
 
 model SlackWorkspace {
-  id          String   @id @default(cuid())
-  tenantId    String   @db.Uuid
-  teamId      String   @unique
-  teamName    String
-  botUserId   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId])
+  id        String   @id @default(cuid())
+  tenantId  String   @unique
+  teamId    String   @unique
+  teamName  String
+  botUserId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
 }
 
 model WebhookEvent {
-  id             String             @id @default(cuid())
-  tenantId       String?            @db.Uuid
-  integrationId  String?
-  source         WebhookSource
-  externalId     String
-  signatureValid Boolean            @default(false)
-  status         WebhookEventStatus @default(RECEIVED)
-  payload        Json
-  error          String?
-  receivedAt     DateTime           @default(now())
-  processedAt    DateTime?
+  id                  String        @id @default(cuid())
+  tenantId            String?
+  provider            Provider
+  externalId          String
+  status              WebhookStatus @default(RECEIVED)
+  payloadHash         String
+  rawPayload          Json?
+  rawPayloadExpiresAt DateTime?
+  truncated           Boolean       @default(false)
+  error               String?
+  receivedAt          DateTime      @default(now())
+  processedAt         DateTime?
+  tenant              Tenant?       @relation(fields: [tenantId], references: [id])
 
-  tenant      Tenant?      @relation(fields: [tenantId], references: [id], onDelete: SetNull)
-  integration Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
-
-  @@unique([source, externalId])
+  @@unique([provider, externalId])
   @@index([tenantId])
+  @@index([rawPayloadExpiresAt])
 }
 
 model Issue {
-  id               String          @id @default(cuid())
-  tenantId         String          @db.Uuid
-  repositoryId     String?
-  title            String
-  summary          String?
-  status           IssueStatus     @default(TRIAGED)
-  severity         IssueSeverity   @default(MEDIUM)
-  correlationScore Float           @default(0)
-  primarySignal    SignalKind?
-  sentryIssueId    String?
-  jiraKey          String?
-  firstSeenAt      DateTime        @default(now())
-  lastSeenAt       DateTime        @default(now())
-  resolvedAt       DateTime?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
-
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  repository   Repository?   @relation(fields: [repositoryId], references: [id], onDelete: SetNull)
-  signals      IssueSignal[]
-  runs         Run[]
-  pullRequests PullRequest[]
+  id             String        @id @default(cuid())
+  tenantId       String
+  repositoryId   String?
+  title          String
+  summary        String
+  status         IssueStatus   @default(NEW)
+  correlationKey String
+  snapshot       Json          @default("{}")
+  signalCount    Int           @default(0)
+  firstSeenAt    DateTime      @default(now())
+  lastSeenAt     DateTime      @default(now())
+  resolvedAt     DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  tenant         Tenant        @relation(fields: [tenantId], references: [id])
+  repository     Repository?   @relation(fields: [repositoryId], references: [id])
+  signals        IssueSignal[]
+  runs           Run[]
+  ticket         Ticket?
 
   @@index([tenantId, status])
-  @@index([tenantId, repositoryId])
+  @@index([tenantId, correlationKey, lastSeenAt])
+}
+
+model Ticket {
+  id         String   @id @default(cuid())
+  tenantId   String
+  issueId    String   @unique
+  key        String
+  url        String
+  projectKey String
+  issueType  String
+  summary    String
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  issue      Issue    @relation(fields: [issueId], references: [id])
+
+  @@unique([tenantId, key])
+  @@index([tenantId])
 }
 
 model IssueSignal {
-  id         String     @id @default(cuid())
-  tenantId   String     @db.Uuid
-  issueId    String
-  kind       SignalKind
-  externalId String
-  source     String
-  title      String?
-  body       String?
-  url        String?
-  metadata   Json       @default("{}")
-  occurredAt DateTime
-  createdAt  DateTime   @default(now())
+  id          String   @id @default(cuid())
+  tenantId    String
+  issueId     String
+  provider    Provider
+  externalId  String
+  eventType   String
+  title       String
+  body        String
+  contentHash String
+  url         String?
+  actor       String?
+  occurredAt  DateTime
+  createdAt   DateTime @default(now())
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  issue       Issue    @relation(fields: [issueId], references: [id])
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  issue  Issue  @relation(fields: [issueId], references: [id], onDelete: Cascade)
-
-  @@unique([tenantId, kind, externalId])
+  @@unique([tenantId, provider, externalId])
   @@index([issueId])
 }
 
+// ---------------------------------------------------------------------------
+// Orchestration
+// ---------------------------------------------------------------------------
+
 model Run {
-  id           String    @id @default(cuid())
-  tenantId     String    @db.Uuid
-  issueId      String
-  status       RunStatus @default(QUEUED)
-  stage        RunStage  @default(PLANNING)
-  attempt      Int       @default(1)
-  model        String?
-  confidence   Float?
-  error        String?
-  replanned    Boolean   @default(false)
-  startedAt    DateTime?
-  finishedAt   DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id          String    @id @default(cuid())
+  tenantId    String
+  issueId     String
+  status      RunStatus @default(QUEUED)
+  attempt     Int       @default(0)
+  replans     Int       @default(0)
+  maxAttempts Int       @default(3)
+  rootCause   String?
+  confidence  Float?
+  lastError   String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  issue       Issue     @relation(fields: [issueId], references: [id])
+  plans       Plan[]
+  patches     Patch[]
+  validations ValidationRun[]
+  pullRequest PullRequest?
 
-  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  issue         Issue           @relation(fields: [issueId], references: [id], onDelete: Cascade)
-  plan          Plan?
-  patch         Patch?
-  validationRuns ValidationRun[]
-  pullRequest   PullRequest?
-
-  @@index([tenantId, issueId, status])
+  @@index([tenantId, status])
+  @@index([issueId])
 }
 
 model Plan {
   id               String   @id @default(cuid())
-  tenantId         String   @db.Uuid
-  runId            String   @unique
+  tenantId         String
+  runId            String
+  attempt          Int
   rootCause        String
   filesToInspect   String[]
   changeStrategy   String
@@ -376,101 +367,115 @@ model Plan {
   confidence       Float
   needsMoreContext Boolean  @default(false)
   missingContext   String[]
-  raw              Json
+  raw              Json?
   createdAt        DateTime @default(now())
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  run              Run      @relation(fields: [runId], references: [id])
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  run    Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  @@unique([runId, attempt])
+  @@index([tenantId])
 }
 
 model Patch {
-  id            String   @id @default(cuid())
-  tenantId      String   @db.Uuid
-  runId         String   @unique
+  id            String       @id @default(cuid())
+  tenantId      String
+  runId         String
+  attempt       Int
   commitMessage String
+  testsToRun    String[]     @default([])
   rationale     String
-  filesChanged  String[]
-  raw           Json
-  createdAt     DateTime @default(now())
+  status        PatchStatus  @default(PENDING)
+  createdAt     DateTime     @default(now())
+  tenant        Tenant       @relation(fields: [tenantId], references: [id])
+  run           Run          @relation(fields: [runId], references: [id])
+  fileChanges   FileChange[]
 
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  run         Run          @relation(fields: [runId], references: [id], onDelete: Cascade)
-  fileChanges FileChange[]
+  @@unique([runId, attempt])
+  @@index([tenantId])
 }
 
 model FileChange {
-  id         String @id @default(cuid())
-  tenantId   String @db.Uuid
+  id         String   @id @default(cuid())
+  tenantId   String
   patchId    String
   path       String
   oldContent String
   newContent String
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  patch  Patch  @relation(fields: [patchId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  patch      Patch    @relation(fields: [patchId], references: [id])
 
   @@index([patchId])
+  @@index([tenantId])
 }
 
 model ValidationRun {
-  id              String           @id @default(cuid())
-  tenantId        String           @db.Uuid
-  runId           String
-  status          ValidationStatus @default(PENDING)
-  testsToRun      String[]
-  lintPassed      Boolean          @default(false)
-  typecheckPassed Boolean          @default(false)
-  testsPassed     Boolean          @default(false)
-  sandboxRunId    String?
-  output          String?
-  durationMs      Int?
-  createdAt       DateTime         @default(now())
+  id           String           @id @default(cuid())
+  tenantId     String
+  runId        String
+  attempt      Int
+  sandboxRunId String?
+  status       ValidationStatus
+  testsRun     String[]
+  lintPassed   Boolean?
+  typesPassed  Boolean?
+  output       String?
+  durationMs   Int?
+  createdAt    DateTime         @default(now())
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  run          Run              @relation(fields: [runId], references: [id])
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  run    Run    @relation(fields: [runId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId, runId])
+  @@index([runId])
+  @@index([tenantId])
 }
 
 model PullRequest {
-  id             String              @id @default(cuid())
-  tenantId       String              @db.Uuid
-  issueId        String
-  repositoryId   String
-  runId          String              @unique
-  provider       RepositoryProvider  @default(GITHUB)
-  externalNumber Int?
-  url            String?
-  branch         String
-  baseBranch     String
-  status         PullRequestStatus   @default(DRAFT)
-  title          String?
-  body           String?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  id           String            @id @default(cuid())
+  tenantId     String
+  runId        String            @unique
+  repositoryId String
+  number       Int
+  url          String
+  title        String
+  headBranch   String
+  baseBranch   String
+  status       PullRequestStatus @default(OPEN)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  tenant       Tenant            @relation(fields: [tenantId], references: [id])
+  run          Run               @relation(fields: [runId], references: [id])
+  repository   Repository        @relation(fields: [repositoryId], references: [id])
 
-  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  issue      Issue      @relation(fields: [issueId], references: [id], onDelete: Cascade)
-  repository Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
-  run        Run        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  @@unique([repositoryId, number])
+}
 
-  @@index([tenantId, status])
+model Rule {
+  id         String   @id @default(cuid())
+  tenantId   String
+  name       String
+  kind       RuleKind
+  enabled    Boolean  @default(false)
+  conditions Json     @default("{}")
+  actions    Json
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, kind])
 }
 
 model AuditLog {
   id         String    @id @default(cuid())
-  tenantId   String    @db.Uuid
+  tenantId   String
   actorType  ActorType
   actorId    String?
   action     String
   targetType String
   targetId   String?
-  metadata   Json      @default("{}")
+  metadata   Json?
   ip         String?
-  userAgent  String?
   createdAt  DateTime  @default(now())
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, createdAt])
 }

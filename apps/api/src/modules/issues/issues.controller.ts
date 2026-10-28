@@ -7,77 +7,112 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 
-import { Scopes } from "../../common/decorators/scopes.decorator.ts";
-import {
-  IssueDetailDto,
-  IssueListResponseDto,
-  IssueStatusResponseDto,
-  ListIssuesQueryDto,
-  ListRunsQueryDto,
-  RunListResponseDto,
-  StartRunResponseDto,
-} from "../runs/dto.ts";
-import { RunService } from "../runs/run.service.ts";
+import { CurrentPrincipal, Scopes } from "../../common/auth/decorators.ts";
+import type { UserPrincipal } from "../../common/auth/principal.ts";
+import { TriageService } from "../triage/triage.service.ts";
+import { IssueListQueryDto } from "./issues.dto.ts";
 import { IssuesService } from "./issues.service.ts";
 
 @ApiTags("issues")
-@Controller({ path: "issues", version: "1" })
+@Controller("issues")
+@Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class IssuesController {
   constructor(
     private readonly issues: IssuesService,
-    private readonly runs: RunService,
+    private readonly triage: TriageService,
   ) {}
 
   @Get()
   @Scopes("issues:read")
   @ApiOperation({ summary: "List triaged issues" })
-  @ApiOkResponse({ type: IssueListResponseDto })
-  list(@Query() query: ListIssuesQueryDto) {
-    return this.issues.list(query);
+  list(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Query() query: IssueListQueryDto,
+  ) {
+    return this.issues.list(
+      principal.tenantId,
+      query.page,
+      query.limit,
+      query.status,
+    );
   }
 
   @Get(":id")
   @Scopes("issues:read")
-  @ApiOperation({ summary: "Get an issue with signals and runs" })
-  @ApiOkResponse({ type: IssueDetailDto })
-  get(@Param("id") id: string) {
-    return this.issues.get(id);
+  @ApiOperation({ summary: "Issue detail with its signals" })
+  get(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.issues.get(principal.tenantId, id);
   }
 
-  @Get(":id/runs")
-  @Scopes("runs:read")
-  @ApiOperation({ summary: "List runs for an issue" })
-  @ApiOkResponse({ type: RunListResponseDto })
-  listRuns(@Param("id") id: string, @Query() query: ListRunsQueryDto) {
-    return this.runs.listByIssue(id, query.page, query.limit);
+  @Get(":id/context")
+  @Scopes("issues:read")
+  @ApiOperation({
+    summary:
+      "Bounded agent context for this issue (cached; enrichment runs once)",
+  })
+  context(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.triage.buildIssueContext(principal.tenantId, id);
   }
 
   @Post(":id/retry")
   @HttpCode(HttpStatus.OK)
-  @Scopes("runs:write")
-  @ApiOperation({ summary: "Start a new run for an issue" })
-  @ApiOkResponse({ type: StartRunResponseDto })
-  retry(@Param("id") id: string) {
-    return this.issues.retry(id);
+  @Scopes("issues:write")
+  @ApiOperation({ summary: "Start a fresh run for a finished report" })
+  retry(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.issues.retry(principal.tenantId, id);
   }
 
   @Post(":id/ignore")
   @HttpCode(HttpStatus.OK)
   @Scopes("issues:write")
-  @ApiOperation({ summary: "Mark an issue ignored" })
-  @ApiOkResponse({ type: IssueStatusResponseDto })
-  ignore(@Param("id") id: string) {
-    return this.issues.ignore(id);
+  @ApiOperation({ summary: "Ignore the report and cancel any open run" })
+  ignore(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.ignore(principal.tenantId, id);
   }
 
   @Post(":id/approve")
   @HttpCode(HttpStatus.OK)
   @Scopes("issues:write")
-  @ApiOperation({ summary: "Mark an issue resolved" })
-  @ApiOkResponse({ type: IssueStatusResponseDto })
-  approve(@Param("id") id: string) {
-    return this.issues.approve(id);
+  @ApiOperation({ summary: "Confirm the shipped fix and resolve the report" })
+  approve(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.approve(principal.tenantId, id);
+  }
+
+  @Post(":id/pr")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Scopes("issues:write")
+  @ApiOperation({
+    summary: "Ship a ready report: open its pull request",
+  })
+  shipPr(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.shipPr(principal.tenantId, id);
+  }
+
+  @Post(":id/ticket")
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Scopes("issues:write")
+  @ApiOperation({
+    summary: "Ship a ready report: create its Jira ticket",
+  })
+  createTicket(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.issues.createTicket(principal.tenantId, id);
   }
 }

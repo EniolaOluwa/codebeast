@@ -8,73 +8,76 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import {
-  ApiCreatedResponse,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from "@nestjs/swagger";
-import type { PaginationMeta } from "@repo/types";
+import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 
-import { Scopes } from "../../common/decorators/scopes.decorator.ts";
-import { PaginationQueryDto } from "../../common/dto/pagination.dto.ts";
-import { RemovedResponseDto } from "../../common/dto/responses.ts";
 import {
-  CreateRepositoryDto,
-  RepositoryListResponseDto,
-  type RepositoryView,
-  RepositoryViewDto,
-  UpdateRepositoryDto,
-} from "./dto.ts";
+  CurrentPrincipal,
+  Roles,
+  Scopes,
+} from "../../common/auth/decorators.ts";
+import type { UserPrincipal } from "../../common/auth/principal.ts";
+import {
+  PaginationQueryDto,
+  RepositoryCreateDto,
+  RepositoryUpdateDto,
+} from "./repositories.dto.ts";
 import { RepositoriesService } from "./repositories.service.ts";
 
 @ApiTags("repositories")
-@Controller({ path: "repositories", version: "1" })
+@Controller("repositories")
+@Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class RepositoriesController {
   constructor(private readonly repositories: RepositoriesService) {}
 
+  @Post()
+  @Roles("OWNER", "ADMIN")
+  @Scopes("repositories:write")
+  @ApiOperation({ summary: "Register a repository for this tenant" })
+  create(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Body() dto: RepositoryCreateDto,
+  ) {
+    return this.repositories.create(principal.tenantId, dto);
+  }
+
   @Get()
   @Scopes("repositories:read")
-  @ApiOperation({ summary: "List connected repositories" })
-  @ApiOkResponse({ type: RepositoryListResponseDto })
+  @ApiOperation({ summary: "List repositories" })
   list(
+    @CurrentPrincipal() principal: UserPrincipal,
     @Query() query: PaginationQueryDto,
-  ): Promise<{ data: RepositoryView[]; pagination: PaginationMeta }> {
-    return this.repositories.list(query.page, query.limit);
+  ) {
+    return this.repositories.list(principal.tenantId, query.page, query.limit);
   }
 
   @Get(":id")
   @Scopes("repositories:read")
-  @ApiOperation({ summary: "Get a repository" })
-  @ApiOkResponse({ type: RepositoryViewDto })
-  get(@Param("id") id: string): Promise<RepositoryView> {
-    return this.repositories.get(id);
-  }
-
-  @Post()
-  @Scopes("repositories:write")
-  @ApiOperation({ summary: "Connect a repository" })
-  @ApiCreatedResponse({ type: RepositoryViewDto })
-  create(@Body() dto: CreateRepositoryDto): Promise<RepositoryView> {
-    return this.repositories.create(dto);
+  @ApiOperation({ summary: "Fetch one repository" })
+  get(@CurrentPrincipal() principal: UserPrincipal, @Param("id") id: string) {
+    return this.repositories.get(principal.tenantId, id);
   }
 
   @Patch(":id")
+  @Roles("OWNER", "ADMIN")
   @Scopes("repositories:write")
   @ApiOperation({ summary: "Update a repository" })
-  @ApiOkResponse({ type: RepositoryViewDto })
   update(
+    @CurrentPrincipal() principal: UserPrincipal,
     @Param("id") id: string,
-    @Body() dto: UpdateRepositoryDto,
-  ): Promise<RepositoryView> {
-    return this.repositories.update(id, dto);
+    @Body() dto: RepositoryUpdateDto,
+  ) {
+    return this.repositories.update(principal.tenantId, id, dto);
   }
 
   @Delete(":id")
+  @Roles("OWNER", "ADMIN")
   @Scopes("repositories:write")
-  @ApiOperation({ summary: "Disconnect a repository" })
-  @ApiOkResponse({ type: RemovedResponseDto })
-  remove(@Param("id") id: string): Promise<{ removed: boolean }> {
-    return this.repositories.remove(id);
+  @ApiOperation({ summary: "Remove a repository" })
+  remove(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.repositories.remove(principal.tenantId, id);
   }
 }

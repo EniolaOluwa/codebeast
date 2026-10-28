@@ -1,106 +1,122 @@
-import { Injectable } from "@nestjs/common";
-import type { PaginationMeta } from "@repo/types";
+import { randomBytes } from "node:crypto";
 
-import { generateApiKey } from "../../common/auth/api-key.ts";
-import { TenantContext } from "../../common/context/tenant-context.ts";
+import { Injectable } from "@nestjs/common";
+import type {
+  ApiKey,
+  ApiKeyCreated,
+  ApiKeyCreateInput,
+  PaginatedResponse,
+} from "@repo/types";
+
+import { API_KEY_PREFIX } from "../../common/auth/principal.ts";
+import { CryptoService } from "../../common/crypto/crypto.service.ts";
 import { NotFoundError } from "../../common/errors/errors.ts";
-import { paginationMeta } from "../../common/pagination/pagination.ts";
+import { paginated, skipTake } from "../../common/pagination.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
-import type { ApiKeyView, CreateApiKeyDto, CreatedApiKeyView } from "./dto.ts";
+
+interface ApiKeyRow {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  lastUsedAt: Date | null;
+  revokedAt: Date | null;
+  createdAt: Date;
+}
+
+function toApiKey(row: ApiKeyRow): ApiKey {
+  return {
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    scopes: row.scopes as ApiKey["scopes"],
+    lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
+    revokedAt: row.revokedAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
 
 @Injectable()
 export class ApiKeysService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly tenantContext: TenantContext,
+    private readonly crypto: CryptoService,
   ) {}
 
-  async list(
-    page: number,
-    limit: number,
-  ): Promise<{ data: ApiKeyView[]; pagination: PaginationMeta }> {
-    const result = await this.prisma.withTenant(async (tx) => {
-      const [rows, total] = await Promise.all([
-        tx.apiKey.findMany({
-          orderBy: { createdAt: "desc" },
-          skip: (page - 1) * limit,
-          take: limit,
-        }),
-        tx.apiKey.count(),
-      ]);
-      return { rows, total };
-    });
+  /**
+   * The raw key is returned exactly once; only its sha256 hash is persisted.
+   * Format: `cb_live_<prefix>_<secret>` (ADR-003).
+   */
+  async create(
+    tenantId: string,
+    input: ApiKeyCreateInput,
+  ): Promise<ApiKeyCreated> {
+    const prefix = `${API_KEY_PREFIX}${randomBytes(4).toString("hex")}`;
+    const key = `${prefix}_${this.crypto.randomToken(32)}`;
 
-    return {
-      data: result.rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        prefix: row.prefix,
-        scopes: row.scopes,
-        lastUsedAt: row.lastUsedAt,
-        expiresAt: row.expiresAt,
-        revokedAt: row.revokedAt,
-        createdAt: row.createdAt,
-      })),
-      pagination: paginationMeta(page, limit, result.total),
-    };
-  }
-
-  async create(dto: CreateApiKeyDto): Promise<CreatedApiKeyView> {
-    const tenantId = this.tenantContext.requireTenantId();
-    const generated = generateApiKey();
-
-    const record = await this.prisma.withTenant((tx) =>
+    const row = await this.prisma.withTenant(tenantId, async (tx) =>
       tx.apiKey.create({
         data: {
           tenantId,
-          name: dto.name,
-          prefix: generated.prefix,
-          keyHash: generated.keyHash,
-          scopes: dto.scopes,
-          expiresAt: dto.expiresAt,
-          createdById:
-            this.tenantContext.get()?.actorType === "USER"
-              ? this.tenantContext.get()?.actorId
-              : undefined,
+          name: input.name,
+          prefix,
+          keyHash: this.crypto.hash(key),
+          scopes: input.scopes,
         },
       }),
     );
 
-    return {
-      id: record.id,
-      name: record.name,
-      prefix: record.prefix,
-      scopes: record.scopes,
-      lastUsedAt: record.lastUsedAt,
-      expiresAt: record.expiresAt,
-      revokedAt: record.revokedAt,
-      createdAt: record.createdAt,
-      key: generated.fullKey,
-    };
+    return { ...toApiKey(row), key };
   }
 
-  async revoke(id: string): Promise<ApiKeyView> {
-    const record = await this.prisma.withTenant(async (tx) => {
-      const existing = await tx.apiKey.findUnique({ where: { id } });
+  async list(
+    tenantId: string,
+    page: number,
+    limit: number,
+  ): Promise<PaginatedResponse<ApiKey>> {
+    const { skip, take } = skipTake(page, limit);
+
+    const [rows, total] = await this.prisma.withTenant(tenantId, async (tx) =>
+      Promise.all([
+        tx.apiKey.findMany({
+          where: { tenantId },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take,
+          select: {
+            id: true,
+            name: true,
+            prefix: true,
+            scopes: true,
+            lastUsedAt: true,
+            revokedAt: true,
+            createdAt: true,
+          },
+        }),
+        tx.apiKey.count({ where: { tenantId } }),
+      ]),
+    );
+
+    return paginated(rows.map(toApiKey), page, limit, total);
+  }
+
+  async revoke(tenantId: string, id: string): Promise<ApiKey> {
+    return this.prisma.withTenant(tenantId, async (tx) => {
+      const existing = await tx.apiKey.findFirst({
+        where: { id, tenantId },
+        select: { id: true, revokedAt: true },
+      });
+
       if (!existing) {
         throw new NotFoundError("API key");
       }
-      return tx.apiKey.update({
-        where: { id },
+
+      const row = await tx.apiKey.update({
+        where: { id: existing.id },
         data: { revokedAt: existing.revokedAt ?? new Date() },
       });
-    });
 
-    return {
-      id: record.id,
-      name: record.name,
-      prefix: record.prefix,
-      scopes: record.scopes,
-      lastUsedAt: record.lastUsedAt,
-      expiresAt: record.expiresAt,
-      revokedAt: record.revokedAt,
-      createdAt: record.createdAt,
-    };
+      return toApiKey(row);
+    });
   }
 }

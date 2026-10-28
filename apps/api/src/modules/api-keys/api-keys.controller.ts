@@ -7,52 +7,50 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import {
-  ApiCreatedResponse,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from "@nestjs/swagger";
-import type { PaginationMeta } from "@repo/types";
+import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 
-import { Roles } from "../../common/decorators/roles.decorator.ts";
-import { PaginationQueryDto } from "../../common/dto/pagination.dto.ts";
-import { ApiKeysService } from "./api-keys.service.ts";
+import { CurrentPrincipal, Roles } from "../../common/auth/decorators.ts";
+import type { UserPrincipal } from "../../common/auth/principal.ts";
 import {
-  ApiKeyListResponseDto,
-  type ApiKeyView,
-  ApiKeyViewDto,
-  CreateApiKeyDto,
-  type CreatedApiKeyView,
-  CreatedApiKeyViewDto,
-} from "./dto.ts";
+  ApiKeyCreatedDto,
+  ApiKeyCreateDto,
+  PaginationQueryDto,
+} from "./api-keys.dto.ts";
+import { ApiKeysService } from "./api-keys.service.ts";
 
 @ApiTags("api-keys")
+@Controller("api-keys")
 @Roles("OWNER", "ADMIN")
-@Controller({ path: "api-keys", version: "1" })
+@Throttle({ default: { limit: 30, ttl: 60_000 } })
 export class ApiKeysController {
   constructor(private readonly apiKeys: ApiKeysService) {}
 
-  @Get()
-  @ApiOperation({ summary: "List API keys (hashes never returned)" })
-  @ApiOkResponse({ type: ApiKeyListResponseDto })
-  list(
-    @Query() query: PaginationQueryDto,
-  ): Promise<{ data: ApiKeyView[]; pagination: PaginationMeta }> {
-    return this.apiKeys.list(query.page, query.limit);
+  @Post()
+  @ApiOperation({ summary: "Create an API key (raw value returned once)" })
+  @ApiOkResponse({ type: ApiKeyCreatedDto })
+  create(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Body() dto: ApiKeyCreateDto,
+  ): Promise<ApiKeyCreatedDto> {
+    return this.apiKeys.create(principal.tenantId, dto);
   }
 
-  @Post()
-  @ApiOperation({ summary: "Create an API key (plaintext returned once)" })
-  @ApiCreatedResponse({ type: CreatedApiKeyViewDto })
-  create(@Body() dto: CreateApiKeyDto): Promise<CreatedApiKeyView> {
-    return this.apiKeys.create(dto);
+  @Get()
+  @ApiOperation({ summary: "List API keys for the tenant" })
+  list(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Query() query: PaginationQueryDto,
+  ) {
+    return this.apiKeys.list(principal.tenantId, query.page, query.limit);
   }
 
   @Delete(":id")
   @ApiOperation({ summary: "Revoke an API key" })
-  @ApiOkResponse({ type: ApiKeyViewDto })
-  revoke(@Param("id") id: string): Promise<ApiKeyView> {
-    return this.apiKeys.revoke(id);
+  revoke(
+    @CurrentPrincipal() principal: UserPrincipal,
+    @Param("id") id: string,
+  ) {
+    return this.apiKeys.revoke(principal.tenantId, id);
   }
 }

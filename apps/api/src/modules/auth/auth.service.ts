@@ -1,249 +1,291 @@
-import { createHash, randomBytes } from "node:crypto";
+import { Injectable } from "@nestjs/common";
+import type {
+  AuthTokens,
+  LoginInput,
+  Me,
+  MembershipRole,
+  RefreshInput,
+  RegisterInput,
+  User,
+} from "@repo/types";
 
-import { Injectable, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
-import type { AuthSessionResponse, CurrentUser } from "@repo/types";
-
-import { JwtService } from "../../common/auth/jwt.service.ts";
 import { hashPassword, verifyPassword } from "../../common/auth/password.ts";
+import type { UserPrincipal } from "../../common/auth/principal.ts";
+import { TokenService } from "../../common/auth/token.service.ts";
+import { CryptoService } from "../../common/crypto/crypto.service.ts";
 import {
   ConflictError,
-  ForbiddenError,
   UnauthorizedError,
 } from "../../common/errors/errors.ts";
-import { PrismaService } from "../../prisma/prisma.service.ts";
-import type { LoginDto, RegisterDto } from "./dto.ts";
+import { newId, newSlug } from "../../common/ids.ts";
+import { PrismaService, RLS_CONTEXT } from "../../prisma/prisma.service.ts";
 
-interface IssueInput {
-  userId: string;
+/**
+ * Verified against when the email does not exist, so failed logins cost the
+ * same time as successful ones (no user enumeration via timing).
+ */
+const DUMMY_PASSWORD_HASH =
+  "scrypt$16384$8$1$GZsDC_LH68jZSYrsSJe1Yw$R_UuDr3miIKuMCmV5o1DEFsnng-i8Pzd0ft7IhXyyacQiVsk5ugeESOVD_wEcOM9TGg7kJlbe_cK3bD3Vhpwug";
+
+interface UserRow {
+  id: string;
   email: string;
   name: string | null;
-  tenantId: string;
-  role: string;
-  userAgent?: string;
-  ip?: string;
-}
-
-function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
-
-function slugify(value: string): string {
-  const base = value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-  return base.length > 0 ? base : "tenant";
-}
-
-export interface RequestMeta {
-  userAgent?: string;
-  ip?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-  private readonly refreshTtl: number;
-
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwt: JwtService,
-    config: ConfigService,
-  ) {
-    this.refreshTtl = config.getOrThrow<number>("JWT_REFRESH_TTL");
-  }
+    private readonly crypto: CryptoService,
+    private readonly tokens: TokenService,
+  ) {}
 
-  async register(
-    dto: RegisterDto,
-    meta: RequestMeta = {},
-  ): Promise<AuthSessionResponse> {
-    const email = dto.email.toLowerCase();
-
+  async register(input: RegisterInput): Promise<AuthTokens> {
     const existing = await this.prisma.client.user.findUnique({
-      where: { email },
+      where: { email: input.email },
+      select: { id: true },
     });
+
     if (existing) {
-      throw new ConflictError("User");
+      throw new ConflictError("A user with this email already exists");
     }
 
-    const slug = `${slugify(dto.tenantName)}-${randomBytes(3).toString("hex")}`;
+    const passwordHash = await hashPassword(input.password);
+    // The tenant id is known up front so the RLS tenant claim can be set in
+    // the same transaction as the tenant/membership inserts.
+    const tenantId = newId();
+    const tenantName =
+      input.tenantName ?? `${input.email.split("@")[0]}'s team`;
 
-    const { user, tenant } = await this.prisma.client.$transaction(
+    const { user } = await this.prisma.withRls(
+      { [RLS_CONTEXT.TENANT]: tenantId },
       async (tx) => {
-        const createdTenant = await tx.tenant.create({
-          data: { name: dto.tenantName, slug },
-        });
-        const createdUser = await tx.user.create({
+        const user = await tx.user.create({
           data: {
-            email,
-            name: dto.name ?? null,
-            passwordHash: hashPassword(dto.password),
+            email: input.email,
+            name: input.name ?? null,
+            passwordHash,
           },
         });
+
+        await tx.tenant.create({
+          data: { id: tenantId, name: tenantName, slug: newSlug(tenantName) },
+        });
+
         await tx.membership.create({
-          data: {
-            tenantId: createdTenant.id,
-            userId: createdUser.id,
-            role: "OWNER",
-          },
+          data: { tenantId, userId: user.id, role: "OWNER" },
         });
-        return { user: createdUser, tenant: createdTenant };
+
+        return { user };
       },
     );
 
-    this.logger.log(`Registered tenant=${tenant.id} user=${user.id}`);
-    return this.issueSession({
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      tenantId: tenant.id,
-      role: "OWNER",
-      userAgent: meta.userAgent,
-      ip: meta.ip,
-    });
+    return this.issueTokens(user, tenantId);
   }
 
-  async login(
-    dto: LoginDto,
-    meta: RequestMeta = {},
-  ): Promise<AuthSessionResponse> {
-    const email = dto.email.toLowerCase();
-    const user = await this.prisma.client.user.findUnique({ where: { email } });
+  async login(input: LoginInput): Promise<AuthTokens> {
+    const user = await this.prisma.client.user.findUnique({
+      where: { email: input.email },
+    });
 
-    if (
-      !user?.passwordHash ||
-      !verifyPassword(dto.password, user.passwordHash)
-    ) {
-      throw new UnauthorizedError("Invalid credentials");
+    const passwordOk = await verifyPassword(
+      input.password,
+      user?.passwordHash ?? DUMMY_PASSWORD_HASH,
+    );
+
+    if (!user || !passwordOk || !user.passwordHash) {
+      throw new UnauthorizedError("Invalid email or password");
     }
 
-    const membership = await this.prisma.client.membership.findFirst({
-      where: { userId: user.id },
-      orderBy: { createdAt: "asc" },
-    });
+    const membership = await this.findPrimaryMembership(user.id);
 
     if (!membership) {
-      throw new ForbiddenError("User has no tenant membership");
+      throw new UnauthorizedError("No tenant membership for this account");
     }
 
-    return this.issueSession({
-      userId: user.id,
-      email: user.email,
-      name: user.name,
-      tenantId: membership.tenantId,
-      role: membership.role,
-      userAgent: meta.userAgent,
-      ip: meta.ip,
-    });
+    return this.issueTokens(user, membership.tenantId);
   }
 
-  async refresh(refreshToken: string): Promise<AuthSessionResponse> {
-    const tokenHash = hashToken(refreshToken);
-    const record = await this.prisma.client.refreshToken.findUnique({
-      where: { tokenHash },
-    });
+  async refresh(input: RefreshInput): Promise<AuthTokens> {
+    const tokenHash = this.crypto.hash(input.refreshToken);
 
-    if (
-      !record ||
-      record.revokedAt !== null ||
-      record.expiresAt.getTime() < Date.now()
-    ) {
+    const existing = await this.prisma.withRls(
+      { [RLS_CONTEXT.REFRESH_TOKEN_HASH]: tokenHash },
+      async (tx) =>
+        tx.refreshToken.findUnique({
+          where: { tokenHash },
+          include: { user: true },
+        }),
+    );
+
+    if (!existing) {
       throw new UnauthorizedError("Invalid refresh token");
     }
 
-    const [user, membership] = await Promise.all([
-      this.prisma.client.user.findUnique({ where: { id: record.userId } }),
-      this.prisma.client.membership.findUnique({
-        where: {
-          tenantId_userId: {
-            tenantId: record.tenantId,
-            userId: record.userId,
+    if (existing.revokedAt) {
+      // A rotated token was presented again: assume theft and revoke the
+      // whole family for this user.
+      await this.revokeAllForUser(existing.tenantId, existing.userId);
+      throw new UnauthorizedError("Refresh token reuse detected");
+    }
+
+    if (existing.expiresAt.getTime() <= Date.now()) {
+      throw new UnauthorizedError("Refresh token expired");
+    }
+
+    const { rawToken } = await this.prisma.withTenant(
+      existing.tenantId,
+      async (tx) => {
+        const rawToken = this.crypto.randomToken(32);
+
+        const created = await tx.refreshToken.create({
+          data: {
+            tenantId: existing.tenantId,
+            userId: existing.userId,
+            tokenHash: this.crypto.hash(rawToken),
+            expiresAt: this.refreshExpiry(),
           },
-        },
-      }),
-    ]);
+        });
 
-    if (!user || !membership) {
-      throw new UnauthorizedError("Session no longer valid");
-    }
+        await tx.refreshToken.update({
+          where: { id: existing.id },
+          data: { revokedAt: new Date(), replacedById: created.id },
+        });
 
-    await this.prisma.client.refreshToken.update({
-      where: { id: record.id },
-      data: { revokedAt: new Date() },
+        return { rawToken };
+      },
+    );
+
+    const access = this.tokens.signAccessToken({
+      userId: existing.userId,
+      tenantId: existing.tenantId,
     });
 
-    return this.issueSession({
+    return {
+      accessToken: access.token,
+      refreshToken: rawToken,
+      tokenType: "Bearer",
+      expiresIn: access.expiresIn,
+    };
+  }
+
+  async logout(input: RefreshInput): Promise<{ success: true }> {
+    const tokenHash = this.crypto.hash(input.refreshToken);
+
+    const existing = await this.prisma.withRls(
+      { [RLS_CONTEXT.REFRESH_TOKEN_HASH]: tokenHash },
+      async (tx) =>
+        tx.refreshToken.findUnique({
+          where: { tokenHash },
+          select: { id: true, tenantId: true, revokedAt: true },
+        }),
+    );
+
+    if (existing && !existing.revokedAt) {
+      await this.prisma.withTenant(existing.tenantId, async (tx) => {
+        await tx.refreshToken.update({
+          where: { id: existing.id },
+          data: { revokedAt: new Date() },
+        });
+      });
+    }
+
+    // Idempotent: logging out an unknown token is not an error.
+    return { success: true };
+  }
+
+  async me(principal: UserPrincipal): Promise<Me> {
+    const user = await this.prisma.client.user.findUniqueOrThrow({
+      where: { id: principal.userId },
+    });
+
+    return {
+      user: toUser(user),
+      tenantId: principal.tenantId,
+      role: principal.role,
+    };
+  }
+
+  private async findPrimaryMembership(
+    userId: string,
+  ): Promise<{ tenantId: string; role: MembershipRole } | null> {
+    const membership = await this.prisma.withRls(
+      { [RLS_CONTEXT.USER]: userId },
+      async (tx) =>
+        tx.membership.findFirst({
+          where: { userId },
+          orderBy: { createdAt: "asc" },
+          select: { tenantId: true, role: true },
+        }),
+    );
+
+    return membership;
+  }
+
+  private async issueTokens(
+    user: UserRow,
+    tenantId: string,
+  ): Promise<AuthTokens> {
+    const access = this.tokens.signAccessToken({
       userId: user.id,
-      email: user.email,
-      name: user.name,
-      tenantId: membership.tenantId,
-      role: membership.role,
-    });
-  }
-
-  async logout(refreshToken: string): Promise<{ loggedOut: boolean }> {
-    const tokenHash = hashToken(refreshToken);
-    await this.prisma.client.refreshToken.updateMany({
-      where: { tokenHash, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    return { loggedOut: true };
-  }
-
-  async me(userId: string, tenantId: string): Promise<CurrentUser> {
-    const [user, membership] = await Promise.all([
-      this.prisma.client.user.findUnique({ where: { id: userId } }),
-      this.prisma.client.membership.findUnique({
-        where: { tenantId_userId: { tenantId, userId } },
-      }),
-    ]);
-
-    if (!user || !membership) {
-      throw new UnauthorizedError("Session no longer valid");
-    }
-
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
       tenantId,
-      role: membership.role,
-    };
-  }
-
-  private async issueSession(input: IssueInput): Promise<AuthSessionResponse> {
-    const accessToken = this.jwt.sign({
-      sub: input.userId,
-      tid: input.tenantId,
-      role: input.role,
     });
 
-    const refreshToken = randomBytes(48).toString("base64url");
-    await this.prisma.client.refreshToken.create({
-      data: {
-        tenantId: input.tenantId,
-        userId: input.userId,
-        tokenHash: hashToken(refreshToken),
-        expiresAt: new Date(Date.now() + this.refreshTtl * 1000),
-        userAgent: input.userAgent,
-        ip: input.ip,
-      },
+    const refreshToken = this.crypto.randomToken(32);
+
+    await this.prisma.withTenant(tenantId, async (tx) => {
+      await tx.refreshToken.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          tokenHash: this.crypto.hash(refreshToken),
+          expiresAt: this.refreshExpiry(),
+        },
+      });
     });
 
     return {
-      user: {
-        id: input.userId,
-        email: input.email,
-        name: input.name,
-        tenantId: input.tenantId,
-        role: input.role as CurrentUser["role"],
-      },
-      tokens: {
-        accessToken,
-        refreshToken,
-        expiresIn: this.jwt.accessTtlSeconds,
-      },
+      accessToken: access.token,
+      refreshToken,
+      tokenType: "Bearer",
+      expiresIn: access.expiresIn,
     };
   }
+
+  private async revokeAllForUser(
+    tenantId: string,
+    userId: string,
+  ): Promise<void> {
+    // Writes always need the tenant claim: RLS `WITH CHECK` is evaluated on
+    // updated rows, so a user claim alone would be rejected (ADR-009).
+    await this.prisma.withRls(
+      {
+        [RLS_CONTEXT.TENANT]: tenantId,
+        [RLS_CONTEXT.USER]: userId,
+      },
+      async (tx) => {
+        await tx.refreshToken.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      },
+    );
+  }
+
+  private refreshExpiry(): Date {
+    return new Date(Date.now() + this.tokens.refreshTtlSeconds * 1000);
+  }
+}
+
+function toUser(row: UserRow): User {
+  return {
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
 }

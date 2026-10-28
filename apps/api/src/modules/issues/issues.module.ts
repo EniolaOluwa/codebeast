@@ -1,14 +1,13 @@
 import { Module } from "@nestjs/common";
 
 import { RunsModule } from "../runs/runs.module.ts";
+import { TriageModule } from "../triage/triage.module.ts";
 import { IssuesController } from "./issues.controller.ts";
 import { IssuesService } from "./issues.service.ts";
-import { TriageService } from "./triage.service.ts";
 
 @Module({
-  imports: [RunsModule],
+  imports: [TriageModule, RunsModule],
   controllers: [IssuesController],
-  providers: [IssuesService, TriageService],
-  exports: [IssuesService, TriageService],
+  providers: [IssuesService],
 })
 export class IssuesModule {}
