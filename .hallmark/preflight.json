@@ -1,0 +1,24 @@
+{
+  "target": "apps/web/app/page.tsx",
+  "route": "/",
+  "kind": "page",
+  "genre": "modern-minimal",
+  "lockedDesignMd": "design.md (console only; waived for /)",
+  "framework": "Next.js 15 App Router + Tailwind 4",
+  "preserved": [
+    "links to /login",
+    "source names Sentry Slack Discord Freshdesk",
+    "destinations Jira ticket and GitHub PR",
+    "sample report Checkout 500 on Apple Pay",
+    "never-deploys guarantee verbatim",
+    "console visual system in design.md and @repo/design-tokens"
+  ],
+  "introduced": [
+    "Hallmark Console theme scoped under .home",
+    "gsap + @gsap/react living field and pipeline travel",
+    "home-only Host Grotesk / Atkinson Hyperlegible Mono"
+  ],
+  "deal": "codebeast-autonomous-sre-signals-7dff·6ebd5c88·2026-10-28·r0",
+  "theme": "console",
+  "draw": "18aea6"
+}

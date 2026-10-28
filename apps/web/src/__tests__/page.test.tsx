@@ -15,11 +15,11 @@ describe("Home Page", () => {
     render(<Page />);
 
     for (const source of ["Sentry", "Slack", "Discord", "Freshdesk"]) {
-      expect(screen.getByText(source)).toBeDefined();
+      expect(screen.getAllByText(source).length).toBeGreaterThan(0);
     }
 
-    expect(screen.getByText("Jira ticket")).toBeDefined();
-    expect(screen.getByText("GitHub PR")).toBeDefined();
+    expect(screen.getAllByText("Jira ticket").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("GitHub PR").length).toBeGreaterThan(0);
   });
 
   it("links to the console", () => {
@@ -31,6 +31,8 @@ describe("Home Page", () => {
 
   it("keeps the no-deploy guarantee visible", () => {
     render(<Page />);
-    expect(screen.getByText(/never deploys or merges/i)).toBeDefined();
+    expect(
+      screen.getAllByText(/never deploys or merges/i).length,
+    ).toBeGreaterThan(0);
   });
 });
