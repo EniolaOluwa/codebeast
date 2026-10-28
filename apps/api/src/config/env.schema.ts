@@ -37,6 +37,19 @@ export const envSchema = z.object({
   REDIS_URL: z.string().min(1).default("redis://localhost:6379"),
   /** Debounce window: signals for one issue coalesce into a single triage. */
   INGEST_COALESCE_MS: z.coerce.number().int().min(0).default(30_000),
+  /** Minutes without an update before an active run is considered stalled. */
+  RUN_STALL_MINUTES: z.coerce.number().int().min(1).default(30),
+  /** When false, BullMQ maintenance schedulers are not registered. */
+  MAINTENANCE_ENABLED: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
+  /** Optional bearer token required for GET /metrics. Empty = open. */
+  METRICS_TOKEN: z.string().optional(),
+  /** Per-integration webhook rate limit (requests per minute). */
+  WEBHOOK_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(1).default(120),
+  /** Serve Swagger UI at /api-docs. Defaults on outside production. */
+  SWAGGER_ENABLED: z.enum(["true", "false"]).optional(),
   /** GitHub App (ADR-005). When unset, the stub GitHub client is used. */
   GITHUB_APP_ID: z.string().optional(),
   /** Base64-encoded PEM private key (`base64 -i app.pem`). */

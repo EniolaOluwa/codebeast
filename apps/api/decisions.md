@@ -118,3 +118,41 @@ rather than rewrite. Status: `Accepted`, `Superseded`, `Proposed`.
 - **Consequences:** Repeat deliveries of the same semantic item do not increment
   `signalCount` (one signal per item per provider); delivery-level history lives on
   `WebhookEvent`.
+
+## ADR-013 — SECURITY DEFINER helpers for cross-tenant maintenance
+
+- **Status:** Accepted
+- **Context:** `Run` and `WebhookEvent` force RLS. The stalled-run reaper and raw-payload
+  janitor must see rows across tenants (and `WebhookEvent.tenantId` may be NULL), but
+  `codebeast_app` cannot bypass RLS on ordinary queries.
+- **Decision:** Ship two narrow `SECURITY DEFINER` Postgres functions owned by the
+  migration role, with a fixed `search_path = public` and `EXECUTE` granted only to
+  `codebeast_app`: `codebeast_stalled_runs` (read-only listing) and
+  `codebeast_purge_raw_payloads` (nulls expired payloads in batches). All subsequent
+  mutations still go through `PrismaService.withTenant`.
+- **Consequences:** Maintenance code must call these helpers rather than inventing new
+  RLS bypasses. Expanding them is a human-reviewed migration.
+
+## ADR-014 — Redis-backed throttler storage
+
+- **Status:** Accepted
+- **Context:** In-memory Nest throttler limits reset per process and cannot share budget
+  across API replicas. Login abuse and noisy webhooks need shared counters.
+- **Decision:** Use a Redis Lua INCR/PEXPIRE storage behind `@nestjs/throttler`. Named
+  throttlers: default (100/min), authEmail (5/min IP+email), authIp (20/min), webhook
+  (per integration+provider, env-tunable). Under `NODE_ENV=test` storage falls back to
+  the in-memory default so suites stay Redis-free.
+- **Consequences:** Redis is required for correct rate limiting in every non-test
+  environment. Readiness already probes Redis.
+
+## ADR-015 — Audit logging is best-effort, not transactional
+
+- **Status:** Accepted
+- **Context:** Every mutating control-plane action and automation side-effect should be
+  visible on the Activity page, but an audit write failure must never roll back a
+  successful ship, login, or rule match.
+- **Decision:** `@Audit` + `AuditInterceptor` record only decorated handlers after a
+  successful response; `AuditService.record` / `recordSystem` catch and log failures.
+  Bodies are redacted before storage. Automation events use `actorType: SYSTEM`.
+- **Consequences:** Audit rows can lag or be missing under DB pressure; they are not a
+  source of truth for authorization.

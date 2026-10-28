@@ -34,4 +34,31 @@ vi.mock("next/font/google", () => ({
     variable: "--font-jetbrains",
     className: "font-jetbrains",
   }),
+  Host_Grotesk: () => ({
+    variable: "--font-home-display",
+    className: "font-home-display",
+  }),
+  Atkinson_Hyperlegible_Mono: () => ({
+    variable: "--font-home-mono",
+    className: "font-home-mono",
+  }),
+}));
+
+vi.mock("gsap", () => {
+  const tween = {
+    to: vi.fn(),
+    fromTo: vi.fn(),
+    set: vi.fn(),
+    quickTo: vi.fn(() => vi.fn()),
+    timeline: vi.fn(() => ({
+      to: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+    })),
+    registerPlugin: vi.fn(),
+  };
+  return { gsap: tween, default: tween };
+});
+
+vi.mock("@gsap/react", () => ({
+  useGSAP: vi.fn(),
 }));

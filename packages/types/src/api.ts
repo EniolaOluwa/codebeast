@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { actorTypeSchema } from "./enums.ts";
+
 /**
  * Transport-level envelopes. Every API error (from the global exception
  * filter) matches `errorEnvelopeSchema`; every paginated list matches
@@ -54,3 +56,34 @@ export interface PaginatedResponse<T = unknown> {
   data: T[];
   pagination: PaginationMeta;
 }
+
+/** Audit log row returned by GET /v1/audit-logs. */
+export const auditLogViewSchema = z.object({
+  id: z.string(),
+  tenantId: z.string(),
+  actorType: actorTypeSchema,
+  actorId: z.string().nullable(),
+  action: z.string(),
+  targetType: z.string(),
+  targetId: z.string().nullable(),
+  metadata: z.unknown().nullable(),
+  ip: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  createdAt: z.iso.datetime(),
+});
+export type AuditLogView = z.infer<typeof auditLogViewSchema>;
+
+export const auditLogListResponseSchema =
+  paginatedResponseSchema(auditLogViewSchema);
+export type AuditLogListResponse = z.infer<typeof auditLogListResponseSchema>;
+
+/** Query filters for GET /v1/audit-logs. */
+export const auditLogListQuerySchema = paginationQuerySchema.extend({
+  actorType: actorTypeSchema.optional(),
+  action: z.string().min(1).max(128).optional(),
+  targetType: z.string().min(1).max(64).optional(),
+  targetId: z.string().min(1).max(64).optional(),
+  from: z.iso.datetime().optional(),
+  to: z.iso.datetime().optional(),
+});
+export type AuditLogListQuery = z.infer<typeof auditLogListQuerySchema>;

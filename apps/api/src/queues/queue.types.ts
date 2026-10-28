@@ -15,6 +15,7 @@ export const QUEUE_NAMES = [
   "pr",
   "ticket",
   "scan",
+  "maintenance",
 ] as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[number];
@@ -54,6 +55,11 @@ export interface ScanJob {
   integrationId: string;
 }
 
+/** Fleet-wide scheduled maintenance (reaper / janitor). */
+export interface MaintenanceJob {
+  kind: "stalled-runs" | "raw-payloads";
+}
+
 export interface QueueJobPayloads {
   ingest: IngestJob;
   triage: TriageJob;
@@ -63,6 +69,7 @@ export interface QueueJobPayloads {
   pr: ShipPrJob;
   ticket: TicketJob;
   scan: ScanJob;
+  maintenance: MaintenanceJob;
 }
 
 export interface PublishOptions {

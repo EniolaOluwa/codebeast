@@ -25,8 +25,11 @@ issue at a time. It has **no database**; the API owns persistence and retries.
 - Docker socket must be mounted in compose (`/var/run/docker.sock`).
 - `WORKSPACE_ROOT` must be writable and shared with sandbox bind mounts.
 - Missing npm scripts in the target repo → validation `ERRORED`, not silent pass.
+- Auth is a shared bearer (`AGENT_SERVICE_TOKEN`); the API's `HttpAgentClient` must
+  send the same value. Never log checkout tokens or the service token.
 
 ## 4. Test conventions
 
 - Unit: colocated `*.test.ts`; mock LLM HTTP; mock sandbox where possible.
 - Fixture repo under `test/fixtures/minimal-repo` for patch/denylist tests.
+- Path-jail and deny-list suites are mandatory when touching tools or patch apply.

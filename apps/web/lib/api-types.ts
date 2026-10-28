@@ -180,3 +180,17 @@ export interface ApiKeyView {
 }
 
 export type IntegrationView = Integration;
+
+export interface AuditLogView {
+  id: string;
+  tenantId: string;
+  actorType: "USER" | "API_KEY" | "SYSTEM";
+  actorId: string | null;
+  action: string;
+  targetType: string;
+  targetId: string | null;
+  metadata: unknown;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+}

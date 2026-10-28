@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 
 import {
@@ -17,6 +17,7 @@ import {
   Scopes,
 } from "../../common/auth/decorators.ts";
 import type { UserPrincipal } from "../../common/auth/principal.ts";
+import { Audit } from "../audit/audit.decorator.ts";
 import {
   PaginationQueryDto,
   RepositoryCreateDto,
@@ -25,6 +26,7 @@ import {
 import { RepositoriesService } from "./repositories.service.ts";
 
 @ApiTags("repositories")
+@ApiBearerAuth()
 @Controller("repositories")
 @Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class RepositoriesController {
@@ -33,6 +35,7 @@ export class RepositoriesController {
   @Post()
   @Roles("OWNER", "ADMIN")
   @Scopes("repositories:write")
+  @Audit("repository.create", { targetType: "repository" })
   @ApiOperation({ summary: "Register a repository for this tenant" })
   create(
     @CurrentPrincipal() principal: UserPrincipal,
@@ -61,6 +64,7 @@ export class RepositoriesController {
   @Patch(":id")
   @Roles("OWNER", "ADMIN")
   @Scopes("repositories:write")
+  @Audit("repository.update", { targetType: "repository", targetParam: "id" })
   @ApiOperation({ summary: "Update a repository" })
   update(
     @CurrentPrincipal() principal: UserPrincipal,
@@ -73,6 +77,7 @@ export class RepositoriesController {
   @Delete(":id")
   @Roles("OWNER", "ADMIN")
   @Scopes("repositories:write")
+  @Audit("repository.remove", { targetType: "repository", targetParam: "id" })
   @ApiOperation({ summary: "Remove a repository" })
   remove(
     @CurrentPrincipal() principal: UserPrincipal,

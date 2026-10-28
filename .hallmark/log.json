@@ -1,0 +1,23 @@
+[
+  {
+    "mode": "redesign",
+    "depth": "full",
+    "scope": "page",
+    "shape": "Narrative Workflow",
+    "theme": "console",
+    "axes": "dark/grotesk-sans/chromatic-amber",
+    "hero": "Stage",
+    "nav": "edge wordmark",
+    "footer": "statement",
+    "imagery": "none",
+    "photos": [],
+    "entry": "/",
+    "fingerprint": "home-console-field",
+    "sections": ["hero", "steps", "guarantees", "close", "footer"],
+    "signature": "live pipeline",
+    "waived": ["design.md for /", "Console motion stillness", "layout order 8"],
+    "prompt": "CodeBeast home living field",
+    "draw": "18aea6",
+    "date": "2026-10-28"
+  }
+]

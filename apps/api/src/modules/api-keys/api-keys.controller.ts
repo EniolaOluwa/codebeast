@@ -7,11 +7,17 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 
 import { CurrentPrincipal, Roles } from "../../common/auth/decorators.ts";
 import type { UserPrincipal } from "../../common/auth/principal.ts";
+import { Audit } from "../audit/audit.decorator.ts";
 import {
   ApiKeyCreatedDto,
   ApiKeyCreateDto,
@@ -20,6 +26,7 @@ import {
 import { ApiKeysService } from "./api-keys.service.ts";
 
 @ApiTags("api-keys")
+@ApiBearerAuth()
 @Controller("api-keys")
 @Roles("OWNER", "ADMIN")
 @Throttle({ default: { limit: 30, ttl: 60_000 } })
@@ -27,6 +34,7 @@ export class ApiKeysController {
   constructor(private readonly apiKeys: ApiKeysService) {}
 
   @Post()
+  @Audit("api_key.create", { targetType: "api_key" })
   @ApiOperation({ summary: "Create an API key (raw value returned once)" })
   @ApiOkResponse({ type: ApiKeyCreatedDto })
   create(
@@ -46,6 +54,7 @@ export class ApiKeysController {
   }
 
   @Delete(":id")
+  @Audit("api_key.revoke", { targetType: "api_key", targetParam: "id" })
   @ApiOperation({ summary: "Revoke an API key" })
   revoke(
     @CurrentPrincipal() principal: UserPrincipal,

@@ -13,6 +13,7 @@ import { StubAgentClient } from "../../clients/stub-agent.client.ts";
 import { StubGitHubClient } from "../../clients/stub-github.client.ts";
 import { PrismaService } from "../../prisma/prisma.service.ts";
 import { JiraModule } from "../jira/jira.module.ts";
+import { MaintenanceModule } from "../maintenance/maintenance.module.ts";
 import { RulesModule } from "../rules/rules.module.ts";
 import { ScansModule } from "../scans/scans.module.ts";
 import { TriageModule } from "../triage/triage.module.ts";
@@ -22,7 +23,13 @@ import { RunsService } from "./runs.service.ts";
 import { WorkersService } from "./workers.service.ts";
 
 @Module({
-  imports: [TriageModule, JiraModule, ScansModule, RulesModule],
+  imports: [
+    TriageModule,
+    JiraModule,
+    ScansModule,
+    RulesModule,
+    MaintenanceModule,
+  ],
   controllers: [RunsController],
   providers: [
     RunOrchestrator,

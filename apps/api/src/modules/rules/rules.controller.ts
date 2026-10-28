@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 
 import {
@@ -19,11 +19,13 @@ import {
   Scopes,
 } from "../../common/auth/decorators.ts";
 import type { UserPrincipal } from "../../common/auth/principal.ts";
+import { Audit } from "../audit/audit.decorator.ts";
 import { RuleEngine } from "./rule-engine.service.ts";
 import { RuleCreateDto, RuleListQueryDto, RuleUpdateDto } from "./rules.dto.ts";
 import { RulesService } from "./rules.service.ts";
 
 @ApiTags("rules")
+@ApiBearerAuth()
 @Controller("rules")
 @Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class RulesController {
@@ -35,6 +37,7 @@ export class RulesController {
   @Post()
   @Roles("OWNER", "ADMIN")
   @Scopes("rules:write")
+  @Audit("rule.create", { targetType: "rule" })
   @ApiOperation({ summary: "Create a detection or automation rule" })
   create(
     @CurrentPrincipal() principal: UserPrincipal,
@@ -63,6 +66,7 @@ export class RulesController {
   @Patch(":id")
   @Roles("OWNER", "ADMIN")
   @Scopes("rules:write")
+  @Audit("rule.update", { targetType: "rule", targetParam: "id" })
   @ApiOperation({ summary: "Update or toggle a rule" })
   update(
     @CurrentPrincipal() principal: UserPrincipal,
@@ -75,6 +79,7 @@ export class RulesController {
   @Delete(":id")
   @Roles("OWNER", "ADMIN")
   @Scopes("rules:write")
+  @Audit("rule.delete", { targetType: "rule", targetParam: "id" })
   @ApiOperation({ summary: "Delete a rule" })
   remove(
     @CurrentPrincipal() principal: UserPrincipal,

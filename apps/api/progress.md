@@ -7,8 +7,8 @@ Tracking doc for the control-plane MVP. Status legend: `[ ]` todo, `[~]` in prog
 
 - **Branch:** `feat/api-develop`
 - **Milestone:** Control-plane MVP
-- **Updated:** 2026-10-23
-- **Baseline green:** `pnpm --filter @repo/api lint && check-types && test`
+- **Updated:** 2026-10-28
+- **Baseline green:** `pnpm --filter @repo/api lint && test` (unit); apply `20261028140000_audit_hardening` before integration
 
 ## Locked decisions
 
@@ -30,7 +30,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 | 6   | Console (design.md) | `[x]`  | `@repo/design-tokens`, Tailwind, landing redesign, shell, Overview/Reports/Report detail, Sources, Settings, BFF auth                                   |
 | 7   | Sources             | `[x]`  | Discord + Freshdesk ingestion                                                                                                                           |
 | 8   | Rules               | `[x]`  | detection + automation engine, dry-run, PR limits, auto-approve                                                                                         |
-| 9   | Hardening           | `[ ]`  | audit logs → Activity, readiness (db+redis), metrics, rate limits, stalled-run reaper, raw-payload janitor                                              |
+| 9   | Hardening           | `[x]`  | audit logs → Activity, readiness (db+redis), metrics, rate limits, stalled-run reaper, raw-payload janitor                                              |
 
 ## Phase 0 — Contracts
 
@@ -140,11 +140,11 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Phase 9 — Hardening
 
-- [ ] audit log interceptor + `GET /v1/audit-logs` → Activity page
-- [ ] extended readiness (db + redis)
-- [ ] metrics + webhook/login rate limits
-- [ ] stalled-run reaper + raw-payload janitor
-- [ ] per-repo RCL + Swagger polish
+- [x] audit log interceptor + `GET /v1/audit-logs` → Activity page
+- [x] extended readiness (db + redis)
+- [x] metrics + webhook/login rate limits (Prometheus + Redis throttler)
+- [x] stalled-run reaper + raw-payload janitor (`maintenance` queue + DEFINER helpers)
+- [x] per-repo RCL + Swagger polish
 
 ## Phase 10 — Agent service
 
@@ -156,4 +156,7 @@ JWT + hashed API keys · BullMQ + Redis · additive Prisma schema + RLS · GitHu
 
 ## Next action
 
-Start **Phase 9**: Hardening — audit log interceptor + `GET /v1/audit-logs` → Activity page, readiness (db + redis), metrics, rate limits, stalled-run reaper, raw-payload janitor, Swagger/RCL polish. Or run the real agent locally via `docker-compose -f docker-compose.dev.yml --profile agent up -d agent` with `AGENT_CLIENT_MODE=http`.
+Phase 9 complete. Run the real agent locally via
+`docker-compose -f docker-compose.dev.yml --profile agent up -d agent` with
+`AGENT_CLIENT_MODE=http`, or pick console polish deferred from Phase 6
+(Playwright smoke, command palette, bulk actions).

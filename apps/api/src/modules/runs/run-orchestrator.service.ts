@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
   type IssueContext,
@@ -30,6 +30,8 @@ import {
   type TicketJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
+import { AuditService } from "../audit/audit.service.ts";
+import { MetricsService } from "../metrics/metrics.service.ts";
 import { RuleEngine } from "../rules/rule-engine.service.ts";
 import { TriageService } from "../triage/triage.service.ts";
 import {
@@ -84,6 +86,8 @@ export class RunOrchestrator {
     private readonly ruleEngine: RuleEngine,
     private readonly githubTokens: GitHubInstallationTokenService,
     config: ConfigService,
+    @Optional() private readonly audit?: AuditService,
+    @Optional() private readonly metrics?: MetricsService,
   ) {
     this.coalesceMs = config.getOrThrow<number>("INGEST_COALESCE_MS");
   }
@@ -548,6 +552,21 @@ export class RunOrchestrator {
       });
     });
 
+    await this.audit?.recordSystem({
+      tenantId: job.tenantId,
+      action: "issue.pr.opened",
+      targetType: "issue",
+      targetId: issue.id,
+      metadata: {
+        runId: run.id,
+        url: created.url,
+        number: created.number,
+        headBranch: created.headBranch,
+        baseBranch: created.baseBranch,
+        title: patch.commitMessage,
+      },
+    });
+
     this.logger.log(`opened ${created.url} for issue ${issue.id}`);
   }
 
@@ -641,6 +660,20 @@ export class RunOrchestrator {
       }
     });
 
+    await this.audit?.recordSystem({
+      tenantId: job.tenantId,
+      action: "issue.ticket.created",
+      targetType: "issue",
+      targetId: issue.id,
+      metadata: {
+        key: created.key,
+        url: created.url,
+        projectKey: created.projectKey,
+        issueType: created.issueType,
+        summary: issue.title,
+      },
+    });
+
     this.logger.log(`created ticket ${created.key} for issue ${issue.id}`);
   }
 
@@ -721,6 +754,23 @@ export class RunOrchestrator {
       }
     });
 
+    this.metrics?.recordRunTransition(decision.next);
+
+    if (decision.next === "ESCALATED") {
+      await this.audit?.recordSystem({
+        tenantId: run.tenantId,
+        action: "run.escalated",
+        targetType: "run",
+        targetId: run.id,
+        metadata: {
+          issueId: run.issueId,
+          stage,
+          reason: decision.reason ?? options.reason ?? null,
+          attempt: decision.attempt,
+        },
+      });
+    }
+
     await this.publishStage(
       run.tenantId,
       run.id,
@@ -770,6 +820,21 @@ export class RunOrchestrator {
     }
 
     this.logger.log(`automation rule ${rule.ruleId} matched issue ${issueId}`);
+
+    await this.audit?.recordSystem({
+      tenantId,
+      action: "rule.automation.matched",
+      targetType: "issue",
+      targetId: issueId,
+      metadata: {
+        ruleId: rule.ruleId,
+        actions: {
+          createTicket: Boolean(rule.actions.createTicket),
+          openPr: Boolean(rule.actions.openPr),
+          repositoryId: rule.actions.repositoryId ?? null,
+        },
+      },
+    });
 
     // The rule's target repository applies to the report when it has none.
     if (rule.actions.repositoryId && !issue.repositoryId) {

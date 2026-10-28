@@ -10,7 +10,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { ZodValidationException } from "nestjs-zod";
 import { ZodError } from "zod";
 
-import { AppException } from "../errors/errors.ts";
+import { AppException, ServiceUnavailableError } from "../errors/errors.ts";
 
 const STATUS_CODES: Record<number, string> = {
   [HttpStatus.BAD_REQUEST]: "BAD_REQUEST",
@@ -88,8 +88,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
         exception instanceof AppException
           ? exception.code
           : (STATUS_CODES[status] ?? `HTTP_${status}`);
+      const details =
+        exception instanceof ServiceUnavailableError
+          ? exception.details
+          : undefined;
 
-      return { status, code, message: this.messageFrom(response, exception) };
+      return {
+        status,
+        code,
+        message: this.messageFrom(response, exception),
+        ...(details === undefined ? {} : { details }),
+      };
     }
 
     return {
