@@ -3,7 +3,7 @@ import "dotenv/config";
 
 import helmet from "@fastify/helmet";
 import underPressure from "@fastify/under-pressure";
-import { Logger, type LogLevel } from "@nestjs/common";
+import { Logger, type LogLevel, VersioningType } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import {
@@ -38,13 +38,19 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     adapter,
-    { logger: resolveLogLevels() },
+    { logger: resolveLogLevels(), rawBody: true },
   );
 
   const config = app.get(ConfigService);
+  const logger = new Logger("Bootstrap");
   const nodeEnv = config.getOrThrow<string>("NODE_ENV");
   const port = config.getOrThrow<number>("PORT");
   const host = config.getOrThrow<string>("HOST");
+
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: "1",
+  });
 
   app.enableCors({
     origin: config.getOrThrow<string>("CORS_ORIGIN").split(","),
@@ -53,7 +59,12 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
-  await app.register(helmet, {
+  const fastify = app.getHttpAdapter().getInstance();
+
+  // Register plugins on the raw Fastify instance without awaiting: awaiting
+  // before `app.init()` triggers Fastify's ready sequence early and deadlocks
+  // Nest's middie registration during `listen`.
+  fastify.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -65,7 +76,7 @@ async function bootstrap(): Promise<void> {
     },
   });
 
-  await app.register(underPressure, {
+  fastify.register(underPressure, {
     maxEventLoopDelay: 1000,
     maxHeapUsedBytes: 1024 * 1024 * 1024,
     maxRssBytes: 1024 * 1024 * 1024,
@@ -87,8 +98,6 @@ async function bootstrap(): Promise<void> {
   const document = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup("api-docs", app, cleanupOpenApiDoc(document));
 
-  const fastify = app.getHttpAdapter().getInstance();
-  const logger = new Logger("Bootstrap");
   let isShuttingDown = false;
 
   fastify.addHook("onRequest", async (_request, reply) => {
