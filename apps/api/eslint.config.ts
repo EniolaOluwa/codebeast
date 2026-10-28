@@ -9,6 +9,7 @@ export default [
     files: ["src/**/*.ts"],
     rules: {
       "@typescript-eslint/consistent-type-imports": "off",
+      "n/no-unsupported-features/node-builtins": "off",
     },
   },
   {
