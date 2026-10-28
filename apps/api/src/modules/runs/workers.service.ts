@@ -10,6 +10,7 @@ import { Redis } from "ioredis";
 
 import {
   type IngestJob,
+  type MaintenanceJob,
   QUEUE_NAMES,
   type QueueName,
   type RunStageJob,
@@ -18,6 +19,8 @@ import {
   type TicketJob,
   type TriageJob,
 } from "../../queues/queue.types.ts";
+import { RawPayloadJanitor } from "../maintenance/raw-payload-janitor.service.ts";
+import { StalledRunReaper } from "../maintenance/stalled-run-reaper.service.ts";
 import { ScanRunner } from "../scans/scan-runner.service.ts";
 import { RunOrchestrator } from "./run-orchestrator.service.ts";
 
@@ -36,6 +39,8 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly orchestrator: RunOrchestrator,
     private readonly scanRunner: ScanRunner,
+    private readonly stalledRunReaper: StalledRunReaper,
+    private readonly rawPayloadJanitor: RawPayloadJanitor,
     config: ConfigService,
   ) {
     this.connection = new Redis(config.getOrThrow<string>("REDIS_URL"), {
@@ -99,6 +104,15 @@ export class WorkersService implements OnModuleInit, OnModuleDestroy {
         return this.orchestrator.handleCreateTicket(data as TicketJob);
       case "scan": {
         await this.scanRunner.run(data as ScanJob);
+        return;
+      }
+      case "maintenance": {
+        const job = data as MaintenanceJob;
+        if (job.kind === "stalled-runs") {
+          await this.stalledRunReaper.run();
+        } else {
+          await this.rawPayloadJanitor.run();
+        }
         return;
       }
     }

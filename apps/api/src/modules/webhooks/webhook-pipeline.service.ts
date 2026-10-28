@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, Optional } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Prisma } from "@repo/db";
 import {
@@ -21,10 +21,12 @@ import {
   QUEUE_PUBLISHER,
   type QueuePublisher,
 } from "../../queues/queue.types.ts";
+import { AuditService } from "../audit/audit.service.ts";
 import {
   type IntegrationRow,
   IntegrationsService,
 } from "../integrations/integrations.service.ts";
+import { MetricsService } from "../metrics/metrics.service.ts";
 import { RuleEngine } from "../rules/rule-engine.service.ts";
 import { CorrelationService } from "./correlation.service.ts";
 import {
@@ -82,6 +84,8 @@ export class WebhookPipelineService {
     private readonly ruleEngine: RuleEngine,
     @Inject(QUEUE_PUBLISHER) private readonly publisher: QueuePublisher,
     config: ConfigService,
+    @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly audit?: AuditService,
   ) {
     this.rawTtlDays = config.getOrThrow<number>("WEBHOOK_RAW_TTL_DAYS");
   }
@@ -180,6 +184,15 @@ export class WebhookPipelineService {
             `detection rule ${detection.ruleId} ignored issue ${outcome.issueId}`,
           );
 
+          await this.audit?.recordSystem({
+            tenantId,
+            action: "rule.detection.ignore",
+            targetType: "issue",
+            targetId: outcome.issueId,
+            metadata: { ruleId: detection.ruleId, provider },
+          });
+          this.metrics?.recordWebhook(provider, "ignored");
+
           return {
             accepted: true,
             duplicate: false,
@@ -190,6 +203,11 @@ export class WebhookPipelineService {
 
       await this.enqueue(tenantId, outcome);
     }
+
+    this.metrics?.recordWebhook(
+      provider,
+      outcome.duplicate ? "duplicate" : "accepted",
+    );
 
     return {
       accepted: true,

@@ -7,7 +7,6 @@ import {
   Req,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { Throttle } from "@nestjs/throttler";
 import type { WebhookAccepted } from "@repo/types";
 import type { FastifyRequest } from "fastify";
 
@@ -32,7 +31,6 @@ function toWebhookRequest(
 @ApiTags("webhooks")
 @Public()
 @Controller("webhooks")
-@Throttle({ default: { limit: 120, ttl: 60_000 } })
 export class WebhooksController {
   constructor(private readonly pipeline: WebhookPipelineService) {}
 

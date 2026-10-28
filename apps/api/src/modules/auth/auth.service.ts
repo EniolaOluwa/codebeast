@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger, Optional } from "@nestjs/common";
 import type {
   AuthTokens,
   LoginInput,
@@ -19,6 +19,7 @@ import {
 } from "../../common/errors/errors.ts";
 import { newId, newSlug } from "../../common/ids.ts";
 import { PrismaService, RLS_CONTEXT } from "../../prisma/prisma.service.ts";
+import { AuditService } from "../audit/audit.service.ts";
 
 /**
  * Verified against when the email does not exist, so failed logins cost the
@@ -37,10 +38,13 @@ interface UserRow {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly tokens: TokenService,
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   async register(input: RegisterInput): Promise<AuthTokens> {
@@ -83,6 +87,16 @@ export class AuthService {
       },
     );
 
+    await this.safeAudit({
+      tenantId,
+      actorType: "USER",
+      actorId: user.id,
+      action: "auth.register",
+      targetType: "user",
+      targetId: user.id,
+      metadata: { email: user.email },
+    });
+
     return this.issueTokens(user, tenantId);
   }
 
@@ -105,6 +119,16 @@ export class AuthService {
     if (!membership) {
       throw new UnauthorizedError("No tenant membership for this account");
     }
+
+    await this.safeAudit({
+      tenantId: membership.tenantId,
+      actorType: "USER",
+      actorId: user.id,
+      action: "auth.login",
+      targetType: "user",
+      targetId: user.id,
+      metadata: { email: user.email },
+    });
 
     return this.issueTokens(user, membership.tenantId);
   }
@@ -190,6 +214,14 @@ export class AuthService {
           where: { id: existing.id },
           data: { revokedAt: new Date() },
         });
+      });
+
+      await this.safeAudit({
+        tenantId: existing.tenantId,
+        actorType: "USER",
+        action: "auth.logout",
+        targetType: "user",
+        metadata: { refreshTokenId: existing.id },
       });
     }
 
@@ -277,6 +309,22 @@ export class AuthService {
 
   private refreshExpiry(): Date {
     return new Date(Date.now() + this.tokens.refreshTtlSeconds * 1000);
+  }
+
+  private async safeAudit(
+    input: Parameters<AuditService["record"]>[0],
+  ): Promise<void> {
+    if (!this.audit) {
+      return;
+    }
+
+    try {
+      await this.audit.record(input);
+    } catch (error) {
+      this.logger.warn(
+        `auth audit failed for ${input.action}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 }
 

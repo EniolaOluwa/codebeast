@@ -24,7 +24,8 @@ export default defineConfig({
       NODE_ENV: "test",
       QUEUE_ENABLED: "false",
       JWT_SECRET: "test-secret-value-that-is-long-enough",
-      ENCRYPTION_KEY: "test-encryption-key-that-is-long-enough",
+      // Must decode to exactly 32 bytes (same as env.schema DEV default).
+      ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
     },
     coverage: {
       provider: "v8",

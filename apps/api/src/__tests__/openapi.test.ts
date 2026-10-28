@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { AppModule } from "../app.module.ts";
 import { PrismaService } from "../prisma/prisma.service.ts";
+import { REDIS_CLIENT } from "../redis/redis.tokens.ts";
 
 const prismaMock = {
   onModuleInit: (): void => undefined,
@@ -18,8 +19,27 @@ const prismaMock = {
   client: {},
 };
 
+const redisMock = {
+  ping: async (): Promise<string> => "PONG",
+  eval: async (): Promise<[number, number]> => [1, 60_000],
+  disconnect: (): void => undefined,
+};
+
+function isPublicPath(path: string): boolean {
+  return (
+    path === "/health" ||
+    path.startsWith("/health/") ||
+    path.includes("/auth/login") ||
+    path.includes("/auth/register") ||
+    path.includes("/auth/refresh") ||
+    path.includes("/auth/logout") ||
+    path.includes("/webhooks")
+  );
+}
+
 describe("OpenAPI document", () => {
   let app: NestFastifyApplication;
+  let document: ReturnType<typeof SwaggerModule.createDocument>;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -27,6 +47,8 @@ describe("OpenAPI document", () => {
     })
       .overrideProvider(PrismaService)
       .useValue(prismaMock)
+      .overrideProvider(REDIS_CLIENT)
+      .useValue(redisMock)
       .compile();
 
     app = moduleRef.createNestApplication<NestFastifyApplication>(
@@ -34,6 +56,15 @@ describe("OpenAPI document", () => {
     );
     await app.init();
     await app.getHttpAdapter().getInstance().ready();
+
+    document = SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder()
+        .setTitle("CodeBeast API")
+        .setVersion("1")
+        .addBearerAuth()
+        .build(),
+    );
   });
 
   afterAll(async () => {
@@ -41,22 +72,15 @@ describe("OpenAPI document", () => {
   });
 
   it("scans every controller without hanging", () => {
-    const document = SwaggerModule.createDocument(
-      app,
-      new DocumentBuilder().setTitle("CodeBeast API").setVersion("1").build(),
-    );
-
     expect(Object.keys(document.paths).length).toBeGreaterThan(0);
-    expect(document.paths["/api-keys"]).toBeDefined();
-    expect(document.paths["/webhooks/{source}/{integrationId}"]).toBeDefined();
+
+    const paths = Object.keys(document.paths);
+    expect(paths.some((path) => path.endsWith("/api-keys"))).toBe(true);
+    expect(paths.some((path) => path.endsWith("/audit-logs"))).toBe(true);
+    expect(paths.some((path) => path.includes("/webhooks/"))).toBe(true);
   });
 
   it("documents a typed success response for every operation", () => {
-    const document = SwaggerModule.createDocument(
-      app,
-      new DocumentBuilder().setTitle("CodeBeast API").setVersion("1").build(),
-    );
-
     for (const [path, item] of Object.entries(document.paths)) {
       for (const [method, operation] of Object.entries(item)) {
         if (
@@ -78,11 +102,39 @@ describe("OpenAPI document", () => {
         ).not.toHaveLength(0);
 
         for (const [status, response] of successResponses) {
+          // Some endpoints (e.g. logout) only declare status without a body schema.
+          if (!response.content) {
+            continue;
+          }
           expect(
-            response.content?.["application/json"]?.schema,
+            response.content["application/json"]?.schema,
             `${method.toUpperCase()} ${path} ${status}`,
           ).toBeDefined();
         }
+      }
+    }
+  });
+
+  it("requires security on non-public operations", () => {
+    for (const [path, item] of Object.entries(document.paths)) {
+      if (isPublicPath(path)) {
+        continue;
+      }
+
+      for (const [method, operation] of Object.entries(item)) {
+        if (
+          !["get", "post", "put", "patch", "delete"].includes(method) ||
+          operation === undefined ||
+          typeof operation !== "object"
+        ) {
+          continue;
+        }
+
+        const op = operation as { security?: unknown[] };
+        expect(
+          op.security?.length ?? 0,
+          `${method.toUpperCase()} ${path} missing security`,
+        ).toBeGreaterThan(0);
       }
     }
   });

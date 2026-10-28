@@ -1,22 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TenantContext } from "../common/context/tenant-context.ts";
-import { PrismaService } from "./prisma.service.ts";
-
-function makeContext(tenantId: string | undefined): TenantContext {
-  return {
-    requireTenantId: (): string => {
-      if (!tenantId) {
-        throw new Error("no tenant");
-      }
-      return tenantId;
-    },
-  } as unknown as TenantContext;
-}
+import { PrismaService, RLS_CONTEXT } from "./prisma.service.ts";
 
 describe("PrismaService", () => {
   it("connects, pings and disconnects through the client", async () => {
-    const service = new PrismaService(makeContext(undefined));
+    const service = new PrismaService();
     const client = {
       $connect: vi.fn().mockResolvedValue(undefined),
       $disconnect: vi.fn().mockResolvedValue(undefined),
@@ -35,7 +23,7 @@ describe("PrismaService", () => {
   });
 
   it("withTenant sets the tenant GUC inside a transaction", async () => {
-    const service = new PrismaService(makeContext("tenant-123"));
+    const service = new PrismaService();
     const executeRaw = vi.fn().mockResolvedValue(1);
     const client = {
       $transaction: vi
@@ -46,9 +34,17 @@ describe("PrismaService", () => {
     };
     (service as unknown as { client: typeof client }).client = client;
 
-    const result = await service.withTenant(async () => "done");
+    const result = await service.withTenant("tenant-123", async () => "done");
 
     expect(result).toBe("done");
     expect(executeRaw).toHaveBeenCalledOnce();
+    // Prisma tagged templates pass the GUC name as a bound value, not inline SQL.
+    expect(executeRaw.mock.calls[0]).toEqual(
+      expect.arrayContaining([
+        expect.anything(),
+        RLS_CONTEXT.TENANT,
+        "tenant-123",
+      ]),
+    );
   });
 });

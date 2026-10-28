@@ -76,3 +76,12 @@ export class ExternalDependencyError extends AppException {
     );
   }
 }
+
+export class ServiceUnavailableError extends AppException {
+  constructor(
+    message: string,
+    public readonly details?: unknown,
+  ) {
+    super("SERVICE_UNAVAILABLE", message, HttpStatus.SERVICE_UNAVAILABLE);
+  }
+}

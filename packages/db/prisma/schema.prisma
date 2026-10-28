@@ -474,6 +474,7 @@ model AuditLog {
   targetId   String?
   metadata   Json?
   ip         String?
+  userAgent  String?
   createdAt  DateTime  @default(now())
   tenant     Tenant    @relation(fields: [tenantId], references: [id])
 

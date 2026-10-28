@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 
 import { CurrentPrincipal, Scopes } from "../../common/auth/decorators.ts";
@@ -8,6 +8,7 @@ import { RunListQueryDto } from "./runs.dto.ts";
 import { RunsService } from "./runs.service.ts";
 
 @ApiTags("runs")
+@ApiBearerAuth()
 @Controller("runs")
 @Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class RunsController {

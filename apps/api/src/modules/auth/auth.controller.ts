@@ -6,8 +6,12 @@ import {
   HttpStatus,
   Post,
 } from "@nestjs/common";
-import { ApiOkResponse, ApiOperation, ApiTags } from "@nestjs/swagger";
-import { Throttle } from "@nestjs/throttler";
+import {
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from "@nestjs/swagger";
 
 import { CurrentPrincipal, Public } from "../../common/auth/decorators.ts";
 import type { UserPrincipal } from "../../common/auth/principal.ts";
@@ -22,7 +26,6 @@ import { AuthService } from "./auth.service.ts";
 
 @ApiTags("auth")
 @Controller("auth")
-@Throttle({ default: { limit: 10, ttl: 60_000 } })
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
@@ -61,6 +64,7 @@ export class AuthController {
   }
 
   @Get("me")
+  @ApiBearerAuth()
   @ApiOperation({ summary: "Current user, tenant and role" })
   @ApiOkResponse({ type: MeDto })
   me(@CurrentPrincipal() principal: UserPrincipal): Promise<MeDto> {

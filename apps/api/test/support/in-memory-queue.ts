@@ -102,6 +102,9 @@ export async function drainQueue(
         await scanRunner.run(job.payload as unknown as ScanJob);
         break;
       }
+      case "maintenance":
+        // Maintenance jobs are driven directly in their own tests.
+        break;
     }
   }
 }

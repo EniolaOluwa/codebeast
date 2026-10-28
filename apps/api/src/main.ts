@@ -3,7 +3,7 @@ import "dotenv/config";
 
 import helmet from "@fastify/helmet";
 import underPressure from "@fastify/under-pressure";
-import { Logger, type LogLevel, VersioningType } from "@nestjs/common";
+import { Logger, type LogLevel } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";
 import {
@@ -14,6 +14,7 @@ import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { cleanupOpenApiDoc } from "nestjs-zod";
 
 import { AppModule } from "./app.module.ts";
+import { MetricsService } from "./modules/metrics/metrics.service.ts";
 
 const LOG_LEVELS: Record<string, LogLevel[]> = {
   verbose: ["fatal", "error", "warn", "log", "debug", "verbose"],
@@ -46,11 +47,13 @@ async function bootstrap(): Promise<void> {
   const nodeEnv = config.getOrThrow<string>("NODE_ENV");
   const port = config.getOrThrow<number>("PORT");
   const host = config.getOrThrow<string>("HOST");
+  const swaggerEnabled =
+    config.get<string>("SWAGGER_ENABLED") === "true" ||
+    (config.get<string>("SWAGGER_ENABLED") === undefined &&
+      nodeEnv !== "production");
 
-  app.enableVersioning({
-    type: VersioningType.URI,
-    defaultVersion: "1",
-  });
+  // API versioning is the RouterModule `path: "v1"` mount in AppModule —
+  // do not also call enableVersioning (that produced /v1/v1/...).
 
   app.enableCors({
     origin: config.getOrThrow<string>("CORS_ORIGIN").split(","),
@@ -84,19 +87,48 @@ async function bootstrap(): Promise<void> {
     healthCheckInterval: 5000,
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle("CodeBeast API")
-    .setDescription("CodeBeast API — autonomous SRE platform")
-    .setVersion("1.0.0")
-    .addServer(
-      nodeEnv === "production"
-        ? "https://api.codebeast.app"
-        : `http://localhost:${port}`,
-    )
-    .build();
+  const metrics = app.get(MetricsService);
+  fastify.addHook("onResponse", (request, reply, done) => {
+    const route =
+      (request as { routeOptions?: { url?: string } }).routeOptions?.url ??
+      "unmatched";
+    const durationSeconds = reply.elapsedTime / 1000;
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup("api-docs", app, cleanupOpenApiDoc(document));
+    metrics.observeHttp(
+      request.method,
+      route,
+      reply.statusCode,
+      durationSeconds,
+    );
+    done();
+  });
+
+  if (swaggerEnabled) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle("CodeBeast API")
+      .setDescription("CodeBeast API — autonomous SRE platform")
+      .setVersion("1.0.0")
+      .addServer(
+        nodeEnv === "production"
+          ? "https://api.codebeast.app"
+          : `http://localhost:${port}`,
+      )
+      .addBearerAuth()
+      .addApiKey(
+        { type: "apiKey", in: "header", name: "Authorization" },
+        "api-key",
+      )
+      .addTag("auth", "Registration, login, refresh, logout")
+      .addTag("audit", "Tenant audit / activity log")
+      .addTag("health", "Liveness and readiness")
+      .addTag("webhooks", "Inbound provider webhooks")
+      .build();
+
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup("api-docs", app, cleanupOpenApiDoc(document), {
+      swaggerOptions: { persistAuthorization: true },
+    });
+  }
 
   let isShuttingDown = false;
 
@@ -142,7 +174,9 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(port, host);
   logger.log(`API server running at http://${host}:${port}`);
-  logger.log(`Swagger docs at http://${host}:${port}/api-docs`);
+  if (swaggerEnabled) {
+    logger.log(`Swagger docs at http://${host}:${port}/api-docs`);
+  }
 }
 
 await bootstrap();

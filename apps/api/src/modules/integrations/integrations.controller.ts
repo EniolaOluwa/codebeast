@@ -10,7 +10,7 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 
 import {
@@ -19,6 +19,7 @@ import {
   Scopes,
 } from "../../common/auth/decorators.ts";
 import type { UserPrincipal } from "../../common/auth/principal.ts";
+import { Audit } from "../audit/audit.decorator.ts";
 import {
   IntegrationCreateDto,
   IntegrationUpdateDto,
@@ -27,6 +28,7 @@ import {
 import { IntegrationsService } from "./integrations.service.ts";
 
 @ApiTags("integrations")
+@ApiBearerAuth()
 @Controller("integrations")
 @Throttle({ default: { limit: 60, ttl: 60_000 } })
 export class IntegrationsController {
@@ -35,6 +37,7 @@ export class IntegrationsController {
   @Post()
   @Roles("OWNER", "ADMIN")
   @Scopes("integrations:write")
+  @Audit("integration.create", { targetType: "integration" })
   @ApiOperation({
     summary: "Connect a provider (secrets are encrypted at rest)",
   })
@@ -65,6 +68,10 @@ export class IntegrationsController {
   @Patch(":id")
   @Roles("OWNER", "ADMIN")
   @Scopes("integrations:write")
+  @Audit("integration.update", {
+    targetType: "integration",
+    targetParam: "id",
+  })
   @ApiOperation({ summary: "Update an integration" })
   update(
     @CurrentPrincipal() principal: UserPrincipal,
@@ -77,6 +84,10 @@ export class IntegrationsController {
   @Delete(":id")
   @Roles("OWNER", "ADMIN")
   @Scopes("integrations:write")
+  @Audit("integration.remove", {
+    targetType: "integration",
+    targetParam: "id",
+  })
   @ApiOperation({ summary: "Disconnect an integration" })
   remove(
     @CurrentPrincipal() principal: UserPrincipal,
@@ -89,6 +100,7 @@ export class IntegrationsController {
   @HttpCode(HttpStatus.ACCEPTED)
   @Roles("OWNER", "ADMIN")
   @Scopes("integrations:write")
+  @Audit("integration.scan", { targetType: "integration", targetParam: "id" })
   @ApiOperation({
     summary: "Scan a Jira source for existing items and import them",
   })
