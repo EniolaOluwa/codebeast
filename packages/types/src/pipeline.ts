@@ -96,5 +96,7 @@ export const validationResultSchema = z.object({
   typesPassed: z.boolean(),
   output: z.string().max(65_536).default(""),
   durationMs: z.number().int().min(0).optional(),
+  /** Id returned by the agent sandbox for audit; optional on the wire. */
+  sandboxRunId: z.string().min(1).optional(),
 });
 export type ValidationResult = z.infer<typeof validationResultSchema>;

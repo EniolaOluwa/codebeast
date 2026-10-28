@@ -2,6 +2,7 @@ import type {
   IssueContext,
   PatchSubmission,
   PlanBlueprint,
+  RepositoryCheckout,
   ValidationResult,
 } from "@repo/types";
 
@@ -21,19 +22,24 @@ export type AgentResult<T> =
   { ok: true; value: T } | { ok: false; failure: AgentFailure };
 
 export interface AgentClient {
-  plan(input: { context: IssueContext }): Promise<AgentResult<PlanBlueprint>>;
+  plan(input: {
+    context: IssueContext;
+    checkout?: RepositoryCheckout;
+  }): Promise<AgentResult<PlanBlueprint>>;
 
   code(input: {
     context: IssueContext;
     plan: PlanBlueprint;
     /** Populated on retries: the validator error from the previous attempt. */
     previousError?: string;
+    checkout?: RepositoryCheckout;
   }): Promise<AgentResult<PatchSubmission>>;
 
   validate(input: {
     patch: PatchSubmission;
     context: IssueContext;
-  }): Promise<AgentResult<ValidationResult>>;
+    checkout?: RepositoryCheckout;
+  }): Promise<AgentResult<ValidationResult & { sandboxRunId?: string }>>;
 }
 
 export const AGENT_CLIENT = Symbol("AGENT_CLIENT");

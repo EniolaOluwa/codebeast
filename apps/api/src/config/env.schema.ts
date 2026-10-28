@@ -48,6 +48,13 @@ export const envSchema = z.object({
   JIRA_CLIENT_MODE: z.enum(["stub", "api"]).default("stub"),
   DISCORD_CLIENT_MODE: z.enum(["stub", "api"]).default("stub"),
   FRESHDESK_CLIENT_MODE: z.enum(["stub", "api"]).default("stub"),
+  /**
+   * Agent reasoning client. `stub` (default) is deterministic for local/CI;
+   * `http` calls `apps/agent` at AGENT_SERVICE_URL with AGENT_SERVICE_TOKEN.
+   */
+  AGENT_CLIENT_MODE: z.enum(["stub", "http"]).default("stub"),
+  AGENT_SERVICE_URL: z.string().url().default("http://localhost:3002"),
+  AGENT_SERVICE_TOKEN: z.string().min(8).default("dev-agent-token-change-me"),
 });
 
 export type Env = z.infer<typeof envSchema>;

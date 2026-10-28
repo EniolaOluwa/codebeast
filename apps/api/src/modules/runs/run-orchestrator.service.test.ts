@@ -118,7 +118,9 @@ function makeHarness() {
 
   const triage = {
     buildIssueContext: vi.fn(async (): Promise<IssueContext> => context),
-  } as unknown as TriageService;
+  } as unknown as TriageService & {
+    buildIssueContext: ReturnType<typeof vi.fn>;
+  };
 
   const agent = {
     plan: vi.fn(async (): Promise<AgentResult<PlanBlueprint>> => ({
@@ -178,6 +180,11 @@ function makeHarness() {
       key === "INGEST_COALESCE_MS" ? 30_000 : undefined,
   } as unknown as ConfigService;
 
+  const githubTokens = {
+    mintInstallationToken: vi.fn(async (): Promise<string | null> => null),
+    isConfigured: vi.fn(() => false),
+  };
+
   const orchestrator = new RunOrchestrator(
     prisma,
     triage,
@@ -186,6 +193,7 @@ function makeHarness() {
     github as never,
     jira as never,
     ruleEngine as never,
+    githubTokens as never,
     config,
   );
 
@@ -196,11 +204,48 @@ function makeHarness() {
     triage,
     agent,
     github,
+    githubTokens,
     jira,
     ruleEngine,
     publisher,
   };
 }
+
+describe("RunOrchestrator checkout plumbing", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("passes checkout to the agent when a GitHub token is available", async () => {
+    const { orchestrator, agent, githubTokens, triage, tx } = makeHarness();
+    triage.buildIssueContext.mockResolvedValue({
+      ...context,
+      repository: { fullName: "acme/web", defaultBranch: "main" },
+    });
+    githubTokens.mintInstallationToken.mockResolvedValue("ghs_test");
+    tx.run.findUnique.mockResolvedValue({
+      id: "run_1",
+      tenantId: "tenant_1",
+      issueId: "issue_1",
+      status: "PLANNING",
+      attempt: 1,
+      replans: 0,
+      maxAttempts: 3,
+      lastError: null,
+      confidence: null,
+    });
+
+    await orchestrator.handlePlan({ tenantId: "tenant_1", runId: "run_1" });
+
+    expect(agent.plan).toHaveBeenCalledWith(
+      expect.objectContaining({
+        checkout: {
+          fullName: "acme/web",
+          ref: "main",
+          token: "ghs_test",
+        },
+      }),
+    );
+  });
+});
 
 describe("RunOrchestrator.handleIngest", () => {
   it("coalesces into a delayed, de-duplicated triage job", async () => {

@@ -1,11 +1,13 @@
 import { Module } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 
-import { AGENT_CLIENT } from "../../clients/agent.client.ts";
+import { AGENT_CLIENT, type AgentClient } from "../../clients/agent.client.ts";
 import {
   GITHUB_CLIENT,
   type GitHubClient,
 } from "../../clients/github.client.ts";
+import { GitHubInstallationTokenService } from "../../clients/github-installation-token.service.ts";
+import { HttpAgentClient } from "../../clients/http-agent.client.ts";
 import { OctokitGitHubClient } from "../../clients/octokit-github.client.ts";
 import { StubAgentClient } from "../../clients/stub-agent.client.ts";
 import { StubGitHubClient } from "../../clients/stub-github.client.ts";
@@ -26,8 +28,18 @@ import { WorkersService } from "./workers.service.ts";
     RunOrchestrator,
     WorkersService,
     RunsService,
-    // Phase 4 uses the deterministic stub; the real agent client swaps in here.
-    { provide: AGENT_CLIENT, useClass: StubAgentClient },
+    GitHubInstallationTokenService,
+    {
+      provide: AGENT_CLIENT,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService): AgentClient => {
+        const mode = config.get<string>("AGENT_CLIENT_MODE") ?? "stub";
+        if (mode === "http") {
+          return new HttpAgentClient(config);
+        }
+        return new StubAgentClient();
+      },
+    },
     {
       provide: GITHUB_CLIENT,
       inject: [ConfigService, PrismaService],
